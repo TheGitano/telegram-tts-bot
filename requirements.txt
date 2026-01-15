@@ -1,6 +1,6 @@
-python-telegram-bot==20.5
+python-telegram-bot==13.15
+gTTS
 PyPDF2
 python-docx
-gTTS
 deep-translator
 langdetect
