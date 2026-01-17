@@ -69,9 +69,9 @@ def tts(text, user_id):
     accent = user_preferences.get(user_id, {}).get('accent', 'es-us')
     speed = user_preferences.get(user_id, {}).get('speed', 'normal')
     slow = SPEED_OPTIONS[speed]['speed']
-    tts = gTTS(text=text, lang=accent, slow=slow)
+    tts_obj = gTTS(text=text, lang=accent, slow=slow)
     audio = io.BytesIO()
-    tts.write_to_fp(audio)
+    tts_obj.write_to_fp(audio)
     audio.seek(0)
     return audio
 
@@ -137,8 +137,13 @@ async def buttons(update, context):
 async def handle_text(update, context):
     uid = update.effective_user.id
     text = update.message.text
-    if detect_language(text) != 'es' and user_preferences.get(uid, {}).get('auto'):
-        text = translate_text(text)
+    # Detectar idioma y traducir si no es español
+    if detect_language(text) != 'es':
+        if user_preferences.get(uid, {}).get('auto'):
+            text = translate_text(text)
+        else:
+            # Si auto está OFF, traducir de todas formas
+            text = translate_text(text)
     audio = tts(text, uid)
     await update.message.reply_voice(audio)
     await update.message.reply_text(FIRMA)
