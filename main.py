@@ -34,7 +34,6 @@ SPEED_OPTIONS = {
 }
 
 user_preferences = {}
-scheduled_deletions = {}
 
 # ================= LOGGING =================
 logging.basicConfig(
@@ -182,22 +181,86 @@ async def config_command(update, context):
         reply_markup=InlineKeyboardMarkup(kb)
     )
 
-# ================= CONFIRMACIÓN DE AUTOBORRADO =================
-async def ask_autodeletion_confirmation(update, context, action_type):
-    """Pregunta al usuario si acepta el autoborrado de 24h"""
-    kb = [
-        [InlineKeyboardButton("✅ Sí, continuar", callback_data=f"confirm_{action_type}")],
-        [InlineKeyboardButton("❌ No, cancelar", callback_data="cancel_action")]
-    ]
+# ================= PROCESAMIENTO DE DOCUMENTOS =================
+async def process_doc_to_audio(message, context, uid):
+    """Procesa documento y genera audio"""
+    try:
+        file_id = context.user_data.get('doc_file_id')
+        file_name = context.user_data.get('doc_file_name')
+        
+        file = await context.bot.get_file(file_id)
+        data = await file.download_as_bytearray()
+        stream = io.BytesIO(data)
+        
+        text = extract_text_from_pdf(stream) if file_name.endswith('.pdf') else extract_text_from_docx(stream)
+        
+        lang = detect_language(text)
+        if lang != 'es':
+            text = translate_text(text)
+        
+        audio = tts(text, uid)
+        sent_msg = await message.reply_voice(audio)
+        final_msg = await message.reply_text(FIRMA, reply_markup=get_return_menu_keyboard())
+        
+        # Programar borrado
+        asyncio.create_task(schedule_message_deletion(context, message.chat_id, sent_msg.message_id))
+        asyncio.create_task(schedule_message_deletion(context, message.chat_id, final_msg.message_id))
+        
+    except Exception as e:
+        await message.reply_text(f"❌ Error: {str(e)}", reply_markup=get_return_menu_keyboard())
+
+async def process_doc_translation(message, context, uid):
+    """Traduce el documento y lo reenvía"""
+    try:
+        file_id = context.user_data.get('doc_file_id')
+        file_name = context.user_data.get('doc_file_name')
+        
+        file = await context.bot.get_file(file_id)
+        data = await file.download_as_bytearray()
+        stream = io.BytesIO(data)
+        
+        is_pdf = file_name.endswith('.pdf')
+        text = extract_text_from_pdf(stream) if is_pdf else extract_text_from_docx(stream)
+        
+        lang = detect_language(text)
+        translated_text = translate_document_text(text, lang)
+        
+        new_doc = Document()
+        for paragraph in translated_text.split('\n'):
+            if paragraph.strip():
+                new_doc.add_paragraph(paragraph)
+        
+        output = io.BytesIO()
+        new_doc.save(output)
+        output.seek(0)
+        
+        lang_suffix = "EN" if lang == 'es' else "ES"
+        new_filename = file_name.replace('.docx', f'_traducido_{lang_suffix}.docx').replace('.pdf', f'_traducido_{lang_suffix}.docx')
+        
+        sent_msg = await message.reply_document(document=output, filename=new_filename)
+        final_msg = await message.reply_text(FIRMA, reply_markup=get_return_menu_keyboard())
+        
+        # Programar borrado
+        asyncio.create_task(schedule_message_deletion(context, message.chat_id, sent_msg.message_id))
+        asyncio.create_task(schedule_message_deletion(context, message.chat_id, final_msg.message_id))
+        
+    except Exception as e:
+        await message.reply_text(f"❌ Error: {str(e)}", reply_markup=get_return_menu_keyboard())
+
+async def process_text_confirmed(message, context, uid):
+    """Procesa el texto después de confirmar"""
+    text = context.user_data.get('pending_text', '')
     
-    await update.message.reply_text(
-        "⚠️ 𝗔𝗩𝗜𝗦𝗢 𝗜𝗠𝗣𝗢𝗥𝗧𝗔𝗡𝗧𝗘\n\n"
-        "Por tu seguridad y privacidad,\n"
-        "este mensaje se autodestruirá\n"
-        "en 24 horas.\n\n"
-        "¿Deseas continuar?",
-        reply_markup=InlineKeyboardMarkup(kb)
-    )
+    if detect_language(text) != 'es':
+        text = translate_text(text)
+    
+    audio = tts(text, uid)
+    sent_msg = await message.reply_voice(audio)
+    final_msg = await message.reply_text(FIRMA, reply_markup=get_return_menu_keyboard())
+    
+    # Programar borrado en 24 horas
+    asyncio.create_task(schedule_message_deletion(context, message.chat_id, sent_msg.message_id))
+    asyncio.create_task(schedule_message_deletion(context, message.chat_id, final_msg.message_id))
 
 # ================= BOTONES =================
 async def buttons(update, context):
@@ -290,18 +353,19 @@ async def buttons(update, context):
             reply_markup=get_return_menu_keyboard()
         )
     
-    # Confirmaciones de autoborrado
-    elif q.data.startswith("confirm_"):
-        action = q.data.replace("confirm_", "")
-        await q.edit_message_text("✅ Procesando tu solicitud...")
-        
-        if action == "text":
-            # Procesado en handle_text
-            context.user_data['confirmed'] = True
-        elif action == "doc_audio":
-            await process_doc_to_audio(q.message, context, uid)
-        elif action == "doc_translate":
-            await process_doc_translation(q.message, context, uid)
+    # Confirmación de procesamiento de texto
+    elif q.data == "confirm_text_process":
+        await q.edit_message_text("✅ Procesando tu texto...")
+        await process_text_confirmed(q.message, context, uid)
+    
+    # Confirmaciones de documento
+    elif q.data == "confirm_doc_audio":
+        await q.edit_message_text("✅ Procesando documento para audio...")
+        await process_doc_to_audio(q.message, context, uid)
+    
+    elif q.data == "confirm_doc_translate":
+        await q.edit_message_text("✅ Traduciendo documento...")
+        await process_doc_translation(q.message, context, uid)
     
     elif q.data == "cancel_action":
         await q.edit_message_text(
@@ -310,7 +374,7 @@ async def buttons(update, context):
             reply_markup=get_return_menu_keyboard()
         )
     
-    # Opciones de documento
+    # Opciones de documento (mostrar confirmación de 24h)
     elif q.data == "doc_audio":
         kb = [
             [InlineKeyboardButton("✅ Sí, continuar", callback_data="confirm_doc_audio")],
@@ -339,84 +403,19 @@ async def buttons(update, context):
             reply_markup=InlineKeyboardMarkup(kb)
         )
 
-async def process_doc_to_audio(message, context, uid):
-    """Procesa documento y genera audio"""
-    try:
-        file_id = context.user_data.get('doc_file_id')
-        file_name = context.user_data.get('doc_file_name')
-        
-        file = await context.bot.get_file(file_id)
-        data = await file.download_as_bytearray()
-        stream = io.BytesIO(data)
-        
-        text = extract_text_from_pdf(stream) if file_name.endswith('.pdf') else extract_text_from_docx(stream)
-        
-        lang = detect_language(text)
-        if lang != 'es':
-            text = translate_text(text)
-        
-        audio = tts(text, uid)
-        sent_msg = await message.reply_voice(audio)
-        final_msg = await message.reply_text(FIRMA, reply_markup=get_return_menu_keyboard())
-        
-        # Programar borrado
-        asyncio.create_task(schedule_message_deletion(context, message.chat_id, sent_msg.message_id))
-        asyncio.create_task(schedule_message_deletion(context, message.chat_id, final_msg.message_id))
-        
-    except Exception as e:
-        await message.reply_text(f"❌ Error: {str(e)}", reply_markup=get_return_menu_keyboard())
-
-async def process_doc_translation(message, context, uid):
-    """Traduce el documento y lo reenvía"""
-    try:
-        file_id = context.user_data.get('doc_file_id')
-        file_name = context.user_data.get('doc_file_name')
-        
-        file = await context.bot.get_file(file_id)
-        data = await file.download_as_bytearray()
-        stream = io.BytesIO(data)
-        
-        is_pdf = file_name.endswith('.pdf')
-        text = extract_text_from_pdf(stream) if is_pdf else extract_text_from_docx(stream)
-        
-        lang = detect_language(text)
-        translated_text = translate_document_text(text, lang)
-        
-        new_doc = Document()
-        for paragraph in translated_text.split('\n'):
-            if paragraph.strip():
-                new_doc.add_paragraph(paragraph)
-        
-        output = io.BytesIO()
-        new_doc.save(output)
-        output.seek(0)
-        
-        lang_suffix = "EN" if lang == 'es' else "ES"
-        new_filename = file_name.replace('.docx', f'_traducido_{lang_suffix}.docx').replace('.pdf', f'_traducido_{lang_suffix}.docx')
-        
-        sent_msg = await message.reply_document(document=output, filename=new_filename)
-        final_msg = await message.reply_text(FIRMA, reply_markup=get_return_menu_keyboard())
-        
-        # Programar borrado
-        asyncio.create_task(schedule_message_deletion(context, message.chat_id, sent_msg.message_id))
-        asyncio.create_task(schedule_message_deletion(context, message.chat_id, final_msg.message_id))
-        
-    except Exception as e:
-        await message.reply_text(f"❌ Error: {str(e)}", reply_markup=get_return_menu_keyboard())
-
 # ================= MENSAJES =================
 async def handle_text(update, context):
     uid = update.effective_user.id
     text = update.message.text
+    
+    # Guardar el texto para procesarlo después
+    context.user_data['pending_text'] = text
     
     # Preguntar por autoborrado
     kb = [
         [InlineKeyboardButton("✅ Sí, continuar", callback_data="confirm_text_process")],
         [InlineKeyboardButton("❌ No, cancelar", callback_data="cancel_action")]
     ]
-    
-    # Guardar el texto para procesarlo después
-    context.user_data['pending_text'] = text
     
     await update.message.reply_text(
         "⚠️ 𝗔𝗩𝗜𝗦𝗢 𝗜𝗠𝗣𝗢𝗥𝗧𝗔𝗡𝗧𝗘\n\n"
@@ -426,21 +425,6 @@ async def handle_text(update, context):
         "¿Deseas continuar?",
         reply_markup=InlineKeyboardMarkup(kb)
     )
-
-async def process_text_confirmed(message, context, uid):
-    """Procesa el texto después de confirmar"""
-    text = context.user_data.get('pending_text', '')
-    
-    if detect_language(text) != 'es':
-        text = translate_text(text)
-    
-    audio = tts(text, uid)
-    sent_msg = await message.reply_voice(audio)
-    final_msg = await message.reply_text(FIRMA, reply_markup=get_return_menu_keyboard())
-    
-    # Programar borrado en 24 horas
-    asyncio.create_task(schedule_message_deletion(context, message.chat_id, sent_msg.message_id))
-    asyncio.create_task(schedule_message_deletion(context, message.chat_id, final_msg.message_id))
 
 async def handle_doc(update, context):
     doc = update.message.document
@@ -460,20 +444,6 @@ async def handle_doc(update, context):
         "¿Qué deseas hacer?",
         reply_markup=InlineKeyboardMarkup(kb)
     )
-
-# Actualizar el handler de botones para procesar texto
-async def buttons(update, context):
-    q = update.callback_query
-    await q.answer()
-    uid = update.effective_user.id
-    user_preferences.setdefault(uid, {})
-
-    # ... (código anterior de botones) ...
-    
-    # Agregar este caso para confirmar procesamiento de texto
-    if q.data == "confirm_text_process":
-        await q.edit_message_text("✅ Procesando tu texto...")
-        await process_text_confirmed(q.message, context, uid)
 
 # ================= MAIN =================
 def main():
