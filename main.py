@@ -65,6 +65,90 @@ def extract_text_from_docx(file):
     doc = Document(file)
     return "\n".join(p.text for p in doc.paragraphs)
 
+def translate_document_text(text, source_lang):
+    """Traduce el texto del documento según el idioma de origen"""
+    try:
+        if source_lang == 'es':
+            # Español a Inglés
+            translator = GoogleTranslator(source='es', target='en')
+        else:
+            # Cualquier otro idioma a Español
+            translator = GoogleTranslator(source='auto', target='es')
+        
+        if len(text) > 4500:
+            parts = [text[i:i+4500] for i in range(0, len(text), 4500)]
+            return ' '.join(translator.translate(p) for p in parts)
+        return translator.translate(text)
+    except:
+        return text
+
+async def process_doc_to_audio(message, context, uid):
+    """Procesa documento y genera audio"""
+    try:
+        file_id = context.user_data.get('doc_file_id')
+        file_name = context.user_data.get('doc_file_name')
+        
+        file = await context.bot.get_file(file_id)
+        data = await file.download_as_bytearray()
+        stream = io.BytesIO(data)
+        
+        # Extraer texto
+        text = extract_text_from_pdf(stream) if file_name.endswith('.pdf') else extract_text_from_docx(stream)
+        
+        # Detectar idioma y traducir si no es español
+        lang = detect_language(text)
+        if lang != 'es':
+            text = translate_text(text)
+        
+        # Generar audio
+        audio = tts(text, uid)
+        await message.reply_voice(audio)
+        await message.reply_text(FIRMA)
+    except Exception as e:
+        await message.reply_text(f"❌ Error al procesar: {str(e)}")
+
+async def process_doc_translation(message, context, uid):
+    """Traduce el documento y lo reenvía"""
+    try:
+        file_id = context.user_data.get('doc_file_id')
+        file_name = context.user_data.get('doc_file_name')
+        
+        file = await context.bot.get_file(file_id)
+        data = await file.download_as_bytearray()
+        stream = io.BytesIO(data)
+        
+        # Extraer texto
+        is_pdf = file_name.endswith('.pdf')
+        text = extract_text_from_pdf(stream) if is_pdf else extract_text_from_docx(stream)
+        
+        # Detectar idioma
+        lang = detect_language(text)
+        
+        # Traducir documento
+        translated_text = translate_document_text(text, lang)
+        
+        # Crear nuevo documento
+        new_doc = Document()
+        for paragraph in translated_text.split('\n'):
+            if paragraph.strip():
+                new_doc.add_paragraph(paragraph)
+        
+        # Guardar documento traducido
+        output = io.BytesIO()
+        new_doc.save(output)
+        output.seek(0)
+        
+        # Determinar nombre del archivo
+        lang_suffix = "EN" if lang == 'es' else "ES"
+        new_filename = file_name.replace('.docx', f'_traducido_{lang_suffix}.docx').replace('.pdf', f'_traducido_{lang_suffix}.docx')
+        
+        # Enviar documento
+        await message.reply_document(document=output, filename=new_filename)
+        await message.reply_text(FIRMA)
+        
+    except Exception as e:
+        await message.reply_text(f"❌ Error al traducir: {str(e)}")
+
 def tts(text, user_id):
     accent = user_preferences.get(user_id, {}).get('accent', 'es-us')
     speed = user_preferences.get(user_id, {}).get('speed', 'normal')
@@ -132,6 +216,14 @@ async def buttons(update, context):
     elif q.data == "auto":
         user_preferences[uid]['auto'] = not user_preferences[uid].get('auto', False)
         await q.edit_message_text(f"✅ Configuración actualizada\n{FIRMA}")
+    
+    elif q.data == "doc_audio":
+        await q.edit_message_text("⏳ Procesando documento para audio...")
+        await process_doc_to_audio(q.message, context, uid)
+    
+    elif q.data == "doc_translate":
+        await q.edit_message_text("⏳ Traduciendo documento...")
+        await process_doc_translation(q.message, context, uid)
 
 # ================= MENSAJES =================
 async def handle_text(update, context):
@@ -150,13 +242,22 @@ async def handle_text(update, context):
 
 async def handle_doc(update, context):
     doc = update.message.document
-    file = await context.bot.get_file(doc.file_id)
-    data = await file.download_as_bytearray()
-    stream = io.BytesIO(data)
-    text = extract_text_from_pdf(stream) if doc.file_name.endswith('.pdf') else extract_text_from_docx(stream)
-    audio = tts(text, update.effective_user.id)
-    await update.message.reply_voice(audio)
-    await update.message.reply_text(FIRMA)
+    uid = update.effective_user.id
+    
+    # Guardar info del documento en context.user_data
+    context.user_data['doc_file_id'] = doc.file_id
+    context.user_data['doc_file_name'] = doc.file_name
+    
+    # Crear botones de opciones
+    kb = [
+        [InlineKeyboardButton("🎧 Audio traducido", callback_data="doc_audio")],
+        [InlineKeyboardButton("📄 Documento traducido", callback_data="doc_translate")]
+    ]
+    
+    await update.message.reply_text(
+        "¿Qué deseas hacer con este documento?",
+        reply_markup=InlineKeyboardMarkup(kb)
+    )
 
 # ================= MAIN =================
 def main():
