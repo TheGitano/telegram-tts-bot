@@ -14,7 +14,7 @@ from gtts import gTTS
 
 # ================= CONFIG =================
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-FIRMA = "By🦅𝓣𝓽ͭ𝓱ͪ𝓮ͤ𝓖𝓲𝓽ͭ𝓪ͣ𝓷𝓸 🦅"
+FIRMA = "Esto fue realizado por El Gitano Traducciones"
 
 AVAILABLE_ACCENTS = {
     'es-es': '🇪🇸 España',
@@ -69,7 +69,7 @@ def tts(text, user_id):
     accent = user_preferences.get(user_id, {}).get('accent', 'es-us')
     speed = user_preferences.get(user_id, {}).get('speed', 'normal')
     slow = SPEED_OPTIONS[speed]['speed']
-    tts = gTTS(text=f"{text}\n\n{FIRMA}", lang=accent, slow=slow)
+    tts = gTTS(text=text, lang=accent, slow=slow)
     audio = io.BytesIO()
     tts.write_to_fp(audio)
     audio.seek(0)
@@ -141,6 +141,7 @@ async def handle_text(update, context):
         text = translate_text(text)
     audio = tts(text, uid)
     await update.message.reply_voice(audio)
+    await update.message.reply_text(FIRMA)
 
 async def handle_doc(update, context):
     doc = update.message.document
@@ -150,6 +151,7 @@ async def handle_doc(update, context):
     text = extract_text_from_pdf(stream) if doc.file_name.endswith('.pdf') else extract_text_from_docx(stream)
     audio = tts(text, update.effective_user.id)
     await update.message.reply_voice(audio)
+    await update.message.reply_text(FIRMA)
 
 # ================= MAIN =================
 def main():
