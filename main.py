@@ -2,7 +2,6 @@ import os
 import logging
 import io
 import asyncio
-from datetime import datetime, timedelta
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application, CommandHandler, MessageHandler, filters,
@@ -13,6 +12,8 @@ import PyPDF2
 from deep_translator import GoogleTranslator
 from langdetect import detect
 from gtts import gTTS
+import speech_recognition as sr
+from pydub import AudioSegment
 
 # ================= CONFIG =================
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -45,18 +46,20 @@ logger = logging.getLogger(__name__)
 # ================= UTILIDADES =================
 def detect_language(text):
     try:
-        return detect(text)
+        lang = detect(text)
+        return lang
     except:
         return 'unknown'
 
-def translate_text(text):
+def translate_text(text, target='es'):
     try:
-        translator = GoogleTranslator(source='auto', target='es')
+        translator = GoogleTranslator(source='auto', target=target)
         if len(text) > 4500:
             parts = [text[i:i+4500] for i in range(0, len(text), 4500)]
             return ' '.join(translator.translate(p) for p in parts)
         return translator.translate(text)
-    except:
+    except Exception as e:
+        logger.error(f"Error traduciendo: {e}")
         return text
 
 def extract_text_from_pdf(file):
@@ -82,20 +85,66 @@ def translate_document_text(text, source_lang):
     except:
         return text
 
-def tts(text, user_id):
-    accent = user_preferences.get(user_id, {}).get('accent', 'es-us')
+def tts(text, user_id, force_lang=None):
+    """Genera audio TTS en el idioma especificado"""
+    if force_lang:
+        lang = force_lang
+    else:
+        accent = user_preferences.get(user_id, {}).get('accent', 'es-us')
+        lang = accent
+    
     speed = user_preferences.get(user_id, {}).get('speed', 'normal')
     slow = SPEED_OPTIONS[speed]['speed']
-    tts_obj = gTTS(text=text, lang=accent, slow=slow)
-    audio = io.BytesIO()
-    tts_obj.write_to_fp(audio)
-    audio.seek(0)
-    return audio
+    
+    try:
+        tts_obj = gTTS(text=text, lang=lang, slow=slow)
+        audio = io.BytesIO()
+        tts_obj.write_to_fp(audio)
+        audio.seek(0)
+        return audio
+    except Exception as e:
+        logger.error(f"Error en TTS: {e}")
+        # Fallback a inglés o español
+        fallback_lang = 'es' if 'es' in str(lang) else 'en'
+        tts_obj = gTTS(text=text, lang=fallback_lang, slow=slow)
+        audio = io.BytesIO()
+        tts_obj.write_to_fp(audio)
+        audio.seek(0)
+        return audio
+
+async def transcribe_audio(file_path):
+    """Transcribe audio a texto usando speech_recognition"""
+    try:
+        recognizer = sr.Recognizer()
+        
+        # Convertir a WAV si es necesario
+        audio = AudioSegment.from_file(file_path)
+        wav_path = file_path.replace('.oga', '.wav').replace('.ogg', '.wav')
+        audio.export(wav_path, format='wav')
+        
+        with sr.AudioFile(wav_path) as source:
+            audio_data = recognizer.record(source)
+            
+            # Intentar reconocer en español primero
+            try:
+                text_es = recognizer.recognize_google(audio_data, language='es-ES')
+                return text_es, 'es'
+            except:
+                # Si falla, intentar en inglés
+                try:
+                    text_en = recognizer.recognize_google(audio_data, language='en-US')
+                    return text_en, 'en'
+                except:
+                    return None, None
+    except Exception as e:
+        logger.error(f"Error transcribiendo audio: {e}")
+        return None, None
 
 def get_main_menu_keyboard():
     """Genera el teclado del menú principal"""
     keyboard = [
         [InlineKeyboardButton("🎤 Convertir Texto a Audio", callback_data="menu_text")],
+        [InlineKeyboardButton("🎙️ Traducir Audio", callback_data="menu_audio")],
         [InlineKeyboardButton("📄 Traducir Documentos", callback_data="menu_docs")],
         [InlineKeyboardButton("🌍 Cambiar Acento", callback_data="menu_accent")],
         [InlineKeyboardButton("⚡ Velocidad de Audio", callback_data="menu_speed")],
@@ -125,8 +174,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "𝗺𝗲 𝗽𝗿𝗼𝗴𝗿𝗮𝗺ó 𝗽𝗮𝗿𝗮 𝗿𝗲𝗮𝗹𝗶𝘇𝗮𝗿\n"
         "𝗲𝘀𝘁𝗼𝘀 𝘁𝗿𝗮𝗯𝗮𝗷𝗼𝘀 𝗽𝗼𝗿 𝘁𝗶:\n\n"
         "✅ Convertir texto a audio\n"
+        "✅ Traducir audio (voz a voz)\n"
         "✅ Traducir documentos (PDF/Word)\n"
-        "✅ Traducción automática\n"
+        "✅ Traducción automática ES ⇄ EN\n"
         "✅ Múltiples acentos en español\n"
         "✅ Control de velocidad\n\n"
         "⚠️ Los mensajes se autodestruyen\n"
@@ -142,9 +192,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "🆘 𝗔𝗬𝗨𝗗𝗔\n\n"
-        "📝 Envía texto y lo convertiré a audio\n"
+        "📝 Envía texto para convertir a audio\n"
+        "🎙️ Envía audio de voz para traducir\n"
         "📄 Envía PDF/Word para traducir\n"
-        "🌍 Traduzco automáticamente a español\n"
+        "🌍 Traduzco automáticamente ES ⇄ EN\n"
         "🎯 Todo con calidad profesional\n\n"
         f"{FIRMA}",
         reply_markup=get_return_menu_keyboard()
@@ -181,7 +232,7 @@ async def config_command(update, context):
         reply_markup=InlineKeyboardMarkup(kb)
     )
 
-# ================= PROCESAMIENTO DE DOCUMENTOS =================
+# ================= PROCESAMIENTO =================
 async def process_doc_to_audio(message, context, uid):
     """Procesa documento y genera audio"""
     try:
@@ -196,13 +247,12 @@ async def process_doc_to_audio(message, context, uid):
         
         lang = detect_language(text)
         if lang != 'es':
-            text = translate_text(text)
+            text = translate_text(text, 'es')
         
         audio = tts(text, uid)
         sent_msg = await message.reply_voice(audio)
         final_msg = await message.reply_text(FIRMA, reply_markup=get_return_menu_keyboard())
         
-        # Programar borrado
         asyncio.create_task(schedule_message_deletion(context, message.chat_id, sent_msg.message_id))
         asyncio.create_task(schedule_message_deletion(context, message.chat_id, final_msg.message_id))
         
@@ -240,27 +290,90 @@ async def process_doc_translation(message, context, uid):
         sent_msg = await message.reply_document(document=output, filename=new_filename)
         final_msg = await message.reply_text(FIRMA, reply_markup=get_return_menu_keyboard())
         
-        # Programar borrado
         asyncio.create_task(schedule_message_deletion(context, message.chat_id, sent_msg.message_id))
         asyncio.create_task(schedule_message_deletion(context, message.chat_id, final_msg.message_id))
         
     except Exception as e:
         await message.reply_text(f"❌ Error: {str(e)}", reply_markup=get_return_menu_keyboard())
 
-async def process_text_confirmed(message, context, uid):
-    """Procesa el texto después de confirmar"""
-    text = context.user_data.get('pending_text', '')
-    
-    if detect_language(text) != 'es':
-        text = translate_text(text)
-    
-    audio = tts(text, uid)
-    sent_msg = await message.reply_voice(audio)
-    final_msg = await message.reply_text(FIRMA, reply_markup=get_return_menu_keyboard())
-    
-    # Programar borrado en 24 horas
-    asyncio.create_task(schedule_message_deletion(context, message.chat_id, sent_msg.message_id))
-    asyncio.create_task(schedule_message_deletion(context, message.chat_id, final_msg.message_id))
+async def process_text_audio(message, context, uid, translate=False):
+    """Procesa el texto y genera audio (original o traducido)"""
+    try:
+        text = context.user_data.get('pending_text', '')
+        original_lang = context.user_data.get('text_lang', 'es')
+        
+        if translate:
+            # Traducir el texto
+            if original_lang == 'es':
+                text = translate_text(text, 'en')
+                audio_lang = 'en'
+            else:
+                text = translate_text(text, 'es')
+                audio_lang = user_preferences.get(uid, {}).get('accent', 'es-us')
+        else:
+            # Audio en idioma original
+            audio_lang = 'en' if original_lang == 'en' else user_preferences.get(uid, {}).get('accent', 'es-us')
+        
+        audio = tts(text, uid, force_lang=audio_lang)
+        sent_msg = await message.reply_voice(audio)
+        final_msg = await message.reply_text(FIRMA, reply_markup=get_return_menu_keyboard())
+        
+        asyncio.create_task(schedule_message_deletion(context, message.chat_id, sent_msg.message_id))
+        asyncio.create_task(schedule_message_deletion(context, message.chat_id, final_msg.message_id))
+        
+    except Exception as e:
+        await message.reply_text(f"❌ Error: {str(e)}", reply_markup=get_return_menu_keyboard())
+
+async def process_voice_translation(message, context, uid):
+    """Procesa audio de voz y lo traduce"""
+    try:
+        status_msg = await message.reply_text("🎙️ Transcribiendo audio...")
+        
+        voice_file_id = context.user_data.get('voice_file_id')
+        file = await context.bot.get_file(voice_file_id)
+        
+        # Descargar archivo
+        file_path = f"voice_{uid}.oga"
+        await file.download_to_drive(file_path)
+        
+        # Transcribir
+        text, detected_lang = await transcribe_audio(file_path)
+        
+        if not text:
+            await status_msg.edit_text("❌ No pude transcribir el audio. Intenta hablar más claro.")
+            return
+        
+        # Traducir automáticamente
+        if detected_lang == 'es':
+            translated_text = translate_text(text, 'en')
+            target_lang = 'en'
+            lang_name = "inglés"
+        else:
+            translated_text = translate_text(text, 'es')
+            target_lang = user_preferences.get(uid, {}).get('accent', 'es-us')
+            lang_name = "español"
+        
+        await status_msg.edit_text(f"✅ Transcrito: {text}\n\n🔄 Traduciendo a {lang_name}...")
+        
+        # Generar audio traducido
+        audio = tts(translated_text, uid, force_lang=target_lang)
+        
+        await status_msg.delete()
+        sent_msg = await message.reply_voice(audio, caption=f"📝 Original: {text}\n🌍 Traducido: {translated_text}")
+        final_msg = await message.reply_text(FIRMA, reply_markup=get_return_menu_keyboard())
+        
+        # Limpiar archivo temporal
+        try:
+            os.remove(file_path)
+            os.remove(file_path.replace('.oga', '.wav'))
+        except:
+            pass
+        
+        asyncio.create_task(schedule_message_deletion(context, message.chat_id, sent_msg.message_id))
+        asyncio.create_task(schedule_message_deletion(context, message.chat_id, final_msg.message_id))
+        
+    except Exception as e:
+        await message.reply_text(f"❌ Error procesando audio: {str(e)}", reply_markup=get_return_menu_keyboard())
 
 # ================= BOTONES =================
 async def buttons(update, context):
@@ -283,10 +396,20 @@ async def buttons(update, context):
     elif q.data == "menu_text":
         await q.edit_message_text(
             "📝 𝗠𝗢𝗗𝗢 𝗧𝗘𝗫𝗧𝗢 𝗔 𝗔𝗨𝗗𝗜𝗢\n\n"
-            "Envíame cualquier texto y lo\n"
-            "convertiré a audio en español.\n\n"
-            "Si está en otro idioma, lo\n"
-            "traduciré automáticamente.",
+            "Envíame texto en español o inglés.\n"
+            "Te preguntaré si quieres el audio\n"
+            "en el idioma original o traducido.",
+            reply_markup=get_return_menu_keyboard()
+        )
+    
+    elif q.data == "menu_audio":
+        await q.edit_message_text(
+            "🎙️ 𝗠𝗢𝗗𝗢 𝗧𝗥𝗔𝗗𝗨𝗖𝗧𝗢𝗥 𝗗𝗘 𝗩𝗢𝗭\n\n"
+            "Envíame un audio de voz y lo\n"
+            "traduciré automáticamente:\n\n"
+            "🇪🇸 Español → 🇬🇧 Inglés\n"
+            "🇬🇧 Inglés → 🇪🇸 Español\n\n"
+            "Recibirás el audio traducido.",
             reply_markup=get_return_menu_keyboard()
         )
     
@@ -353,10 +476,19 @@ async def buttons(update, context):
             reply_markup=get_return_menu_keyboard()
         )
     
-    # Confirmación de procesamiento de texto
-    elif q.data == "confirm_text_process":
-        await q.edit_message_text("✅ Procesando tu texto...")
-        await process_text_confirmed(q.message, context, uid)
+    # Opciones de idioma para texto
+    elif q.data == "text_original":
+        await q.edit_message_text("✅ Procesando en idioma original...")
+        await process_text_audio(q.message, context, uid, translate=False)
+    
+    elif q.data == "text_translated":
+        await q.edit_message_text("✅ Procesando y traduciendo...")
+        await process_text_audio(q.message, context, uid, translate=True)
+    
+    # Confirmación de audio de voz
+    elif q.data == "confirm_voice_process":
+        await q.edit_message_text("✅ Procesando tu audio...")
+        await process_voice_translation(q.message, context, uid)
     
     # Confirmaciones de documento
     elif q.data == "confirm_doc_audio":
@@ -408,62 +540,44 @@ async def handle_text(update, context):
     uid = update.effective_user.id
     text = update.message.text
     
-    # Guardar el texto para procesarlo después
-    context.user_data['pending_text'] = text
+    # Detectar idioma
+    lang = detect_language(text)
     
-    # Preguntar por autoborrado
+    # Guardar datos
+    context.user_data['pending_text'] = text
+    context.user_data['text_lang'] = lang
+    
+    # Solo procesar inglés y español
+    if lang not in ['en', 'es']:
+        await update.message.reply_text(
+            "❌ Solo puedo procesar texto en inglés o español.",
+            reply_markup=get_return_menu_keyboard()
+        )
+        return
+    
+    lang_name = "inglés" if lang == 'en' else "español"
+    target_lang = "español" if lang == 'en' else "inglés"
+    
+    # Preguntar qué tipo de audio quiere
     kb = [
-        [InlineKeyboardButton("✅ Sí, continuar", callback_data="confirm_text_process")],
-        [InlineKeyboardButton("❌ No, cancelar", callback_data="cancel_action")]
+        [InlineKeyboardButton(f"🎵 Audio en {lang_name} (original)", callback_data="text_original")],
+        [InlineKeyboardButton(f"🌍 Audio traducido a {target_lang}", callback_data="text_translated")],
+        [InlineKeyboardButton("❌ Cancelar", callback_data="cancel_action")]
     ]
     
     await update.message.reply_text(
-        "⚠️ 𝗔𝗩𝗜𝗦𝗢 𝗜𝗠𝗣𝗢𝗥𝗧𝗔𝗡𝗧𝗘\n\n"
-        "Por tu seguridad y privacidad,\n"
-        "este mensaje se autodestruirá\n"
-        "en 24 horas.\n\n"
-        "¿Deseas continuar?",
+        f"📝 Texto detectado en {lang_name}\n\n"
+        "⚠️ El audio se autodestruirá en 24h\n\n"
+        "¿Qué tipo de audio deseas?",
         reply_markup=InlineKeyboardMarkup(kb)
     )
 
-async def handle_doc(update, context):
-    doc = update.message.document
+async def handle_voice(update, context):
+    """Maneja mensajes de voz"""
     uid = update.effective_user.id
     
-    context.user_data['doc_file_id'] = doc.file_id
-    context.user_data['doc_file_name'] = doc.file_name
+    # Guardar ID del archivo de voz
+    context.user_data['voice_file_id'] = update.message.voice.file_id
     
+    # Preguntar confirmación
     kb = [
-        [InlineKeyboardButton("🎧 Audio traducido", callback_data="doc_audio")],
-        [InlineKeyboardButton("📄 Documento traducido", callback_data="doc_translate")],
-        [InlineKeyboardButton("🏠 Menú Principal", callback_data="return_menu")]
-    ]
-    
-    await update.message.reply_text(
-        "📄 𝗗𝗢𝗖𝗨𝗠𝗘𝗡𝗧𝗢 𝗥𝗘𝗖𝗜𝗕𝗜𝗗𝗢\n\n"
-        "¿Qué deseas hacer?",
-        reply_markup=InlineKeyboardMarkup(kb)
-    )
-
-# ================= MAIN =================
-def main():
-    if not TELEGRAM_BOT_TOKEN:
-        print("❌ TOKEN NO CONFIGURADO")
-        return
-
-    app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
-
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("help", help_command))
-    app.add_handler(CommandHandler("accent", accent_command))
-    app.add_handler(CommandHandler("speed", speed_command))
-    app.add_handler(CommandHandler("config", config_command))
-    app.add_handler(CallbackQueryHandler(buttons))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
-    app.add_handler(MessageHandler(filters.Document.ALL, handle_doc))
-
-    print("🤖 Bot iniciado correctamente")
-    app.run_polling()
-
-if __name__ == "__main__":
-    main()
