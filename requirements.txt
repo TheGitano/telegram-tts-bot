@@ -6,3 +6,6 @@ deep-translator
 langdetect
 SpeechRecognition
 pydub
+openai-whisper
+torch
+ffmpeg-python
