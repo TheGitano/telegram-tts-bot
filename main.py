@@ -22,7 +22,9 @@ FIRMA_TEXTO = "¡¡ Esto fue realizado por 🦅𝓣𝓽ͭ𝓱ͪ𝓮ͤ𝓖𝓲�
 AUTHORIZED_USERS = {"Gitano": "8376"}  # Usuario permanente
 trial_limits = 1
 
+# Cargar modelo Whisper
 model = whisper.load_model("base")
+
 user_sessions = {}  # {telegram_id: {"username": str, "authenticated": bool, "premium": bool, "first_use": datetime}}
 user_trials = {}    # {telegram_id: {"texto": int, "audio": int, "documento": int}}
 
@@ -89,38 +91,6 @@ def check_expiration(uid):
         return False
     return True
 
-# ================= MENÚ PRINCIPAL =================
-
-async def show_main_menu(update, context):
-    uid = update.effective_user.id
-    if not user_sessions.get(uid, {}).get("authenticated", False):
-        await update.message.reply_text("🔑 Debes iniciar sesión con tu usuario y contraseña usando /start")
-        return
-
-    kb = [
-        [InlineKeyboardButton("🎧 Conversación bilingüe (Intérprete)", callback_data="menu_interpreter")],
-        [InlineKeyboardButton("🗣 Traductor de voz", callback_data="menu_voice_translator")],
-        [InlineKeyboardButton("📄 Traducir documentos", callback_data="menu_docs")],
-        [InlineKeyboardButton("📝 Texto a voz", callback_data="menu_text")],
-        [InlineKeyboardButton("🧪 Prueba (trial limitado)", callback_data="menu_trial")],
-        [InlineKeyboardButton("💎 Versión Premium", callback_data="menu_premium")],
-        [InlineKeyboardButton("⚙ Configuración", callback_data="menu_config")],
-        [InlineKeyboardButton("❓ Ayuda", callback_data="menu_help")]
-    ]
-
-    username = user_sessions[uid]["username"]
-    text = f"🎙 Bienvenido {username}!\nEste bot ha sido creado por *El Gitano* para ayudarte a:\n"\
-           "• Traducir texto a español latino\n"\
-           "• Traducir audios (Inglés ⇄ Español)\n"\
-           "• Traducir documentos Word/PDF\n"\
-           "• Conversar en modo intérprete bilingüe\n"\
-           "• Convertir texto a voz con acento latino\n\nSelecciona una opción:"
-
-    if update.message:
-        await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
-    else:
-        await update.callback_query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
-
 # ================= LOGIN =================
 
 async def start(update, context):
@@ -148,40 +118,72 @@ async def login_password(update, context):
         await update.message.reply_text("❌ Usuario o contraseña incorrecta. Intenta de nuevo.")
         return await start(update, context)
 
+# ================= MENÚ =================
+
+async def show_main_menu(update, context):
+    uid = update.effective_user.id
+    if not user_sessions.get(uid, {}).get("authenticated", False):
+        await update.message.reply_text("🔑 Debes iniciar sesión primero con /start")
+        return
+
+    kb = [
+        [InlineKeyboardButton("🎧 Conversación bilingüe (Intérprete)", callback_data="menu_interpreter")],
+        [InlineKeyboardButton("🗣 Traductor de voz", callback_data="menu_voice_translator")],
+        [InlineKeyboardButton("📄 Traducir documentos", callback_data="menu_docs")],
+        [InlineKeyboardButton("📝 Texto a voz", callback_data="menu_text")],
+        [InlineKeyboardButton("🧪 Prueba (trial limitado)", callback_data="menu_trial")],
+        [InlineKeyboardButton("💎 Versión Premium", callback_data="menu_premium")],
+        [InlineKeyboardButton("⚙ Configuración", callback_data="menu_config")],
+        [InlineKeyboardButton("❓ Ayuda", callback_data="menu_help")]
+    ]
+
+    username = user_sessions[uid]["username"]
+    text = f"🎙 Bienvenido {username}!\nEste bot ha sido creado por *El Gitano* para ayudarte a:\n"\
+           "• Traducir texto a español latino\n"\
+           "• Traducir audios (Inglés ⇄ Español)\n"\
+           "• Traducir documentos Word/PDF\n"\
+           "• Conversar en modo intérprete bilingüe\n"\
+           "• Convertir texto a voz con acento latino\n\nSelecciona una opción:"
+
+    if update.message:
+        await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
+    else:
+        await update.callback_query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
+
 # ================= BOTONES =================
 
 async def buttons(update, context):
     q = update.callback_query
     await q.answer()
     uid = update.effective_user.id
-    user_sessions.setdefault(uid, {"authenticated": False, "premium": False, "first_use": datetime.now()})
-    if not user_sessions[uid]["authenticated"]:
+    if not user_sessions.get(uid, {}).get("authenticated", False):
         await update.callback_query.edit_message_text("❌ Debes iniciar sesión primero con /start")
         return
 
-    if q.data == "menu_interpreter":
+    data = q.data
+    if data == "menu_interpreter":
         await q.edit_message_text("🎧 Modo intérprete activado. Envíame audio para traducir.")
-    elif q.data == "menu_voice_translator":
+    elif data == "menu_voice_translator":
         await q.edit_message_text("🗣 Envíame un audio para traducir (Inglés ⇄ Español).")
-    elif q.data == "menu_docs":
+    elif data == "menu_docs":
         await q.edit_message_text("📄 Envíame un documento Word o PDF para traducirlo.")
-    elif q.data == "menu_text":
+    elif data == "menu_text":
         await q.edit_message_text("📝 Envíame texto para convertir a voz.")
-    elif q.data == "menu_trial":
+    elif data == "menu_trial":
         await q.edit_message_text("🧪 Has seleccionado la prueba. Solo un uso por función. Después deberás comprar Premium.")
-    elif q.data == "menu_premium":
+    elif data == "menu_premium":
         kb = [[InlineKeyboardButton("💰 PAGAR", callback_data="pay")], [InlineKeyboardButton("⬅ Volver al menú", callback_data="back_menu")]]
         text = ("💎 *Versión Premium*\n\n"
                 "Acceso ilimitado a todas las funciones.\n"
                 "Costo: $27 dólares por 30 días.\n\n"
                 "Para abonar, presiona PAGAR y completa tu información.")
         await q.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
-    elif q.data == "pay":
+    elif data == "pay":
         await q.edit_message_text("💳 Ingresa tu nombre completo, correo y teléfono separados por comas.\nAlias de pago: THEGITANO2AX.PF\nEnvía la captura de pago a corporatebusinessunitedstates@gmail.com")
-    elif q.data == "back_menu":
+    elif data == "back_menu":
         await show_main_menu(update, context)
 
-# ================= TEXTO =================
+# ================= FUNCIONES =================
 
 async def handle_text(update, context):
     uid = update.effective_user.id
@@ -189,14 +191,12 @@ async def handle_text(update, context):
         await update.message.reply_text("❌ Tu versión trial caducó. Debes comprar Premium.")
         return
     if not check_trial(uid, "texto"):
-        await update.message.reply_text("¡¡ Ulala, veo que ya me utilizaste y probaste mi funcionamiento pero para seguir usandome debes comprar la versión premium !!!")
+        await update.message.reply_text("¡¡ Ulala, ya probaste el bot, compra Premium para seguir usando !!")
         return
     audio = tts(update.message.text, "es")
     await update.message.reply_voice(audio)
     kb = [[InlineKeyboardButton("⬅ Volver al menú", callback_data="back_menu")]]
     await update.message.reply_text(FIRMA_TEXTO, reply_markup=InlineKeyboardMarkup(kb))
-
-# ================= DOCUMENTOS =================
 
 async def handle_doc(update, context):
     uid = update.effective_user.id
@@ -204,7 +204,7 @@ async def handle_doc(update, context):
         await update.message.reply_text("❌ Tu versión trial caducó. Debes comprar Premium.")
         return
     if not check_trial(uid, "documento"):
-        await update.message.reply_text("¡¡ Ulala, veo que ya me utilizaste y probaste mi funcionamiento pero para seguir usandome debes comprar la versión premium !!!")
+        await update.message.reply_text("¡¡ Ulala, ya probaste el bot, compra Premium para seguir usando !!")
         return
     doc = update.message.document
     file = await context.bot.get_file(doc.file_id)
@@ -222,15 +222,13 @@ async def handle_doc(update, context):
     kb = [[InlineKeyboardButton("⬅ Volver al menú", callback_data="back_menu")]]
     await update.message.reply_text(FIRMA_TEXTO, reply_markup=InlineKeyboardMarkup(kb))
 
-# ================= AUDIO =================
-
 async def handle_voice(update, context):
     uid = update.effective_user.id
     if not check_expiration(uid):
         await update.message.reply_text("❌ Tu versión trial caducó. Debes comprar Premium.")
         return
     if not check_trial(uid, "audio"):
-        await update.message.reply_text("¡¡ Ulala, veo que ya me utilizaste y probaste mi funcionamiento pero para seguir usandome debes comprar la versión premium !!!")
+        await update.message.reply_text("¡¡ Ulala, ya probaste el bot, compra Premium para seguir usando !!")
         return
 
     voice = update.message.voice
@@ -262,6 +260,7 @@ def main():
 
     app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 
+    # ConversationHandler para login
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler('start', start)],
         states={
@@ -271,7 +270,7 @@ def main():
         fallbacks=[]
     )
 
-    app.add_handler(conv_handler)
+    app.add_handler(conv_handler)  # Debe ir primero
     app.add_handler(CallbackQueryHandler(buttons))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     app.add_handler(MessageHandler(filters.Document.ALL, handle_doc))
