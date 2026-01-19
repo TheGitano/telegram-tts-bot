@@ -39,7 +39,6 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
-logger = logging.getLogger(__name__)
 
 # ================= UTILIDADES =================
 def detect_language(text):
@@ -86,37 +85,31 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("🎧 Conversación bilingüe", callback_data="bilingual")],
         [InlineKeyboardButton("🗣 Cambiar acento", callback_data="accent_menu")],
         [InlineKeyboardButton("⚡ Cambiar velocidad", callback_data="speed_menu")],
-        [InlineKeyboardButton("🔁 Traducción automática", callback_data="auto_menu")]
+        [InlineKeyboardButton("🔁 Traducción automática", callback_data="auto_toggle")]
     ]
 
     await update.message.reply_text(
         "¡Hola! Soy tu bot de Text-to-Speech 100% GRATUITO\n\n"
         "Funcionalidades:\n"
-        "• Convierte texto a voz (sin límites)\n"
-        "• Lee archivos PDF y Word\n"
-        "• Traduce automáticamente a español\n"
-        "• Múltiples acentos latinos\n"
+        "• Texto → Voz\n"
+        "• PDF y Word → Voz\n"
+        "• Traducción automática\n"
+        "• Acentos latinos\n"
         "• Velocidad ajustable\n"
         "• 🎧 Conversación bilingüe por audio\n\n"
-        "Cómo usarme:\n"
-        "Envíame texto, PDF, Word o audio\n\n"
+        "Envíame texto, documentos o audios.\n\n"
         "Selecciona una opción:",
         reply_markup=InlineKeyboardMarkup(kb)
     )
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "Comandos disponibles:\n"
-        "/start - Ver menú principal\n"
+        "/start - Menú principal\n"
         "/help - Ayuda\n"
         "/config - Traducción automática\n"
         "/accent - Cambiar acento\n"
         "/speed - Cambiar velocidad\n\n"
-        "También puedes enviar:\n"
-        "• Texto\n"
-        "• PDF\n"
-        "• Word\n"
-        "• Audio (modo bilingüe)\n\n"
+        "También puedes enviar texto, PDF, Word o audio.\n\n"
         f"{FIRMA}"
     )
 
@@ -153,7 +146,7 @@ async def buttons(update, context):
 
     elif q.data == "auto_toggle":
         user_preferences[uid]['auto'] = not user_preferences[uid].get('auto', False)
-        await q.edit_message_text("Configuración actualizada")
+        await q.edit_message_text("Traducción automática actualizada")
 
     elif q.data.startswith("accent_"):
         user_preferences[uid]['accent'] = q.data.replace("accent_", "")
