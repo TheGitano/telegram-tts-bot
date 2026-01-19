@@ -6,3 +6,4 @@ deep-translator
 langdetect
 SpeechRecognition
 pydub
+python-dotenv
