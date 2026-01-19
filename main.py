@@ -1,6 +1,7 @@
 import os
 import logging
 import io
+import subprocess
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application, CommandHandler, MessageHandler, filters,
@@ -11,41 +12,39 @@ import PyPDF2
 from deep_translator import GoogleTranslator
 from langdetect import detect
 from gtts import gTTS
+import whisper
 
 # ================= CONFIG =================
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+
 FIRMA_TEXTO = "¡¡ Esto fue realizado por 🦅𝓣𝓽ͭ𝓱ͪ𝓮ͤ𝓖𝓲𝓽ͭ𝓪ͣ𝓷𝓸 🦅 !!"
 
-AVAILABLE_ACCENTS = {
-    'es-us': '🇲🇽 Español Latino',
-    'es-ar': '🇦🇷 Argentina',
-    'es-es': '🇪🇸 España'
-}
-
-SPEED_OPTIONS = {
-    'normal': {'speed': False, 'name': 'Normal'},
-    'lento': {'speed': True, 'name': 'Lento'}
-}
+model = whisper.load_model("base")
 
 user_preferences = {}
 
 # ================= LOGGING =================
-logging.basicConfig(
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    level=logging.INFO
-)
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # ================= UTILIDADES =================
+
+def translate_text(text, target):
+    translator = GoogleTranslator(source='auto', target=target)
+    return translator.translate(text)
+
 def detect_language(text):
     try:
         return detect(text)
     except:
-        return 'unknown'
+        return "unknown"
 
-def translate_text(text, target='es'):
-    translator = GoogleTranslator(source='auto', target=target)
-    return translator.translate(text)
+def tts(text, lang="es"):
+    tts = gTTS(text=text, lang=lang)
+    audio = io.BytesIO()
+    tts.write_to_fp(audio)
+    audio.seek(0)
+    return audio
 
 def extract_text_from_pdf(file):
     reader = PyPDF2.PdfReader(file)
@@ -55,94 +54,54 @@ def extract_text_from_docx(file):
     doc = Document(file)
     return "\n".join(p.text for p in doc.paragraphs)
 
-def tts(text, user_id):
-    prefs = user_preferences.get(user_id, {})
-    accent = prefs.get('accent', 'es-us')
-    speed = prefs.get('speed', 'normal')
-    slow = SPEED_OPTIONS[speed]['speed']
+def convert_ogg_to_wav(ogg_path, wav_path):
+    subprocess.run(["ffmpeg", "-y", "-i", ogg_path, wav_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
-    tts = gTTS(text=text, lang=accent, slow=slow)
-    audio = io.BytesIO()
-    tts.write_to_fp(audio)
-    audio.seek(0)
-    return audio
+def transcribe_audio(path):
+    result = model.transcribe(path)
+    return result["text"]
 
-# ================= MENÚ PRINCIPAL =================
+# ================= MENÚ =================
 
 async def show_main_menu(update, context):
     kb = [
         [InlineKeyboardButton("🎧 Conversación bilingüe (INTÉRPRETE)", callback_data="menu_interpreter")],
         [InlineKeyboardButton("📄 Traducir PDF o Word", callback_data="menu_docs")],
         [InlineKeyboardButton("📝 Texto a Voz", callback_data="menu_text")],
-        [InlineKeyboardButton("⚙ Configuración", callback_data="menu_config")],
         [InlineKeyboardButton("❓ Ayuda", callback_data="menu_help")]
     ]
 
     text = (
-        "🎙 *BOT TEXT TO SPEECH PRO — 100% GRATIS*\n\n"
+        "🎙 BOT INTÉRPRETE PRO\n\n"
         "Selecciona una opción:"
     )
 
     if update.message:
-        await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
+        await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(kb))
     else:
-        await update.callback_query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
-
-# ================= MENÚ INTÉRPRETE =================
+        await update.callback_query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb))
 
 async def interpreter_menu(update, context):
     uid = update.effective_user.id
     user_preferences.setdefault(uid, {})
-    status = user_preferences[uid].get("bilingual", False)
+    status = user_preferences[uid].get("interpreter", False)
 
     status_text = "✅ ACTIVADO" if status else "❌ DESACTIVADO"
-    toggle_text = "❌ DESACTIVAR INTÉRPRETE" if status else "✅ ACTIVAR INTÉRPRETE"
+    toggle_text = "❌ DESACTIVAR" if status else "✅ ACTIVAR"
 
     kb = [
         [InlineKeyboardButton(toggle_text, callback_data="toggle_interpreter")],
-        [InlineKeyboardButton("⬅ Volver al menú", callback_data="back_menu")]
+        [InlineKeyboardButton("⬅ Volver", callback_data="back_menu")]
     ]
 
     text = (
-        "🎧 *MODO INTÉRPRETE*\n\n"
-        "Convierte audio automáticamente:\n"
-        "🇪🇸 Español ⇄ Inglés\n\n"
-        f"Estado actual: {status_text}"
+        "🎧 MODO INTÉRPRETE\n\n"
+        "Traducción por voz en tiempo real\n"
+        "Español ⇄ Inglés\n\n"
+        f"Estado: {status_text}"
     )
 
-    await update.callback_query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
-
-# ================= CONFIG =================
-
-async def config_menu(update, context):
-    uid = update.effective_user.id
-    user_preferences.setdefault(uid, {})
-    auto = user_preferences[uid].get('auto', True)
-
-    auto_text = "ON" if auto else "OFF"
-
-    kb = [
-        [InlineKeyboardButton(f"🌎 Traducción automática: {auto_text}", callback_data="toggle_auto")],
-        [InlineKeyboardButton("⬅ Volver al menú", callback_data="back_menu")]
-    ]
-
-    text = "⚙ *Configuración del bot*"
-
-    await update.callback_query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
-
-# ================= COMANDOS =================
-
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await show_main_menu(update, context)
-
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "❓ Ayuda\n\n"
-        "• Envia texto para convertir a voz\n"
-        "• Envia PDF o Word para traducir\n"
-        "• Usa el modo intérprete para conversar\n\n"
-        "100% GRATIS — Sin límites"
-    )
+    await update.callback_query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb))
 
 # ================= BOTONES =================
 
@@ -159,52 +118,41 @@ async def buttons(update, context):
         await q.edit_message_text("📄 Envíame un archivo PDF o Word para traducirlo.")
 
     elif q.data == "menu_text":
-        await q.edit_message_text("📝 Escríbeme el texto que deseas convertir a voz.")
-
-    elif q.data == "menu_config":
-        await config_menu(update, context)
+        await q.edit_message_text("📝 Escríbeme el texto que deseas convertir a audio.")
 
     elif q.data == "menu_help":
         await q.edit_message_text(
             "❓ Ayuda\n\n"
-            "Envía texto o documentos.\n"
-            "Usa el modo intérprete para conversar."
+            "• Envía texto para convertir a voz\n"
+            "• Envía audio para traducir\n"
+            "• Activa modo intérprete para conversar"
         )
 
     elif q.data == "toggle_interpreter":
-        user_preferences[uid]["bilingual"] = not user_preferences[uid].get("bilingual", False)
+        user_preferences[uid]["interpreter"] = not user_preferences[uid].get("interpreter", False)
         await interpreter_menu(update, context)
-
-    elif q.data == "toggle_auto":
-        user_preferences[uid]["auto"] = not user_preferences[uid].get("auto", True)
-        await config_menu(update, context)
 
     elif q.data == "back_menu":
         await show_main_menu(update, context)
 
-# ================= MENSAJES =================
+# ================= COMANDOS =================
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await show_main_menu(update, context)
+
+# ================= TEXTO =================
 
 async def handle_text(update, context):
     uid = update.effective_user.id
-    user_preferences.setdefault(uid, {})
     text = update.message.text
 
-    if user_preferences[uid].get("bilingual"):
-        lang = detect_language(text)
-        target = "es" if lang == "en" else "en"
-        text = translate_text(text, target)
-
-    elif user_preferences[uid].get("auto", True):
-        if detect_language(text) != 'es':
-            text = translate_text(text, 'es')
-
-    audio = tts(text, uid)
+    audio = tts(text, "es")
     await update.message.reply_voice(audio)
     await update.message.reply_text(FIRMA_TEXTO)
 
+# ================= DOCUMENTOS =================
+
 async def handle_doc(update, context):
-    uid = update.effective_user.id
-    user_preferences.setdefault(uid, {})
     doc = update.message.document
     file = await context.bot.get_file(doc.file_id)
     data = await file.download_as_bytearray()
@@ -215,11 +163,39 @@ async def handle_doc(update, context):
     else:
         text = extract_text_from_docx(stream)
 
-    text = translate_text(text, 'es')
-    audio = tts(text, uid)
+    translated = translate_text(text, "es")
+    audio = tts(translated, "es")
 
     await update.message.reply_voice(audio)
     await update.message.reply_text(FIRMA_TEXTO)
+
+# ================= AUDIO =================
+
+async def handle_voice(update, context):
+    uid = update.effective_user.id
+    prefs = user_preferences.get(uid, {})
+
+    voice = update.message.voice
+    file = await context.bot.get_file(voice.file_id)
+
+    ogg_path = f"/tmp/{voice.file_id}.ogg"
+    wav_path = f"/tmp/{voice.file_id}.wav"
+
+    await file.download_to_drive(ogg_path)
+    convert_ogg_to_wav(ogg_path, wav_path)
+
+    text = transcribe_audio(wav_path)
+
+    if prefs.get("interpreter"):
+        lang = detect_language(text)
+        target = "es" if lang == "en" else "en"
+        translated = translate_text(text, target)
+        audio = tts(translated, target)
+        await update.message.reply_voice(audio)
+    else:
+        audio = tts(text, "es")
+        await update.message.reply_voice(audio)
+        await update.message.reply_text(FIRMA_TEXTO)
 
 # ================= MAIN =================
 
@@ -231,10 +207,10 @@ def main():
     app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CallbackQueryHandler(buttons))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     app.add_handler(MessageHandler(filters.Document.ALL, handle_doc))
+    app.add_handler(MessageHandler(filters.VOICE, handle_voice))
 
     app.run_polling()
 
