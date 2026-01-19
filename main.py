@@ -13,27 +13,16 @@ import PyPDF2
 from deep_translator import GoogleTranslator
 from langdetect import detect
 from gtts import gTTS
-import whisper
 
 # ================= CONFIG =================
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 FIRMA_TEXTO = "¡¡ Esto fue realizado por 🦅𝓣𝓱𝓮𝓖𝓲𝓽𝓪𝓷𝓸 🦅 !!"
 
-AUTHORIZED_USERS = {"Gitano": "8376"}  # Usuario permanente
+AUTHORIZED_USERS = {"Gitano": "8376"}
 trial_limits = 1
 
-# Cargar modelo Whisper (usar tiny para menor consumo de recursos)
-try:
-    model = whisper.load_model("tiny")
-    logger_whisper = logging.getLogger(__name__)
-    logger_whisper.info("Modelo Whisper cargado exitosamente")
-except Exception as e:
-    model = None
-    logger_whisper = logging.getLogger(__name__)
-    logger_whisper.error(f"Error cargando Whisper: {e}")
-
-user_sessions = {}  # {telegram_id: {"username": str, "authenticated": bool, "premium": bool, "first_use": datetime}}
-user_trials = {}    # {telegram_id: {"texto": int, "audio": int, "documento": int}}
+user_sessions = {}
+user_trials = {}
 
 # ================= LOGGING =================
 logging.basicConfig(
@@ -50,7 +39,6 @@ def translate_text(text, target="es"):
         if not text or len(text.strip()) == 0:
             return ""
         translator = GoogleTranslator(source="auto", target=target)
-        # Dividir texto largo en chunks para evitar errores
         max_length = 4500
         if len(text) > max_length:
             chunks = [text[i:i+max_length] for i in range(0, len(text), max_length)]
@@ -71,7 +59,6 @@ def tts(text, lang="es"):
     """Convierte texto a voz"""
     try:
         audio = io.BytesIO()
-        # Limitar longitud del texto para TTS
         max_chars = 5000
         if len(text) > max_chars:
             text = text[:max_chars] + "..."
@@ -104,7 +91,6 @@ def translate_docx(file_bytes, target="es"):
             if paragraph.text.strip():
                 paragraph.text = translate_text(paragraph.text, target)
         
-        # Traducir tablas si existen
         for table in doc.tables:
             for row in table.rows:
                 for cell in row.cells:
@@ -119,34 +105,9 @@ def translate_docx(file_bytes, target="es"):
         logger.error(f"Error traduciendo DOCX: {e}")
         return None
 
-def convert_ogg_to_wav(ogg_path, wav_path):
-    """Convierte OGG a WAV usando ffmpeg"""
-    try:
-        result = subprocess.run(
-            ["ffmpeg", "-y", "-i", ogg_path, "-ar", "16000", "-ac", "1", wav_path],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE,
-            timeout=30
-        )
-        return result.returncode == 0
-    except Exception as e:
-        logger.error(f"Error convirtiendo audio: {e}")
-        return False
-
-def transcribe_audio(path):
-    """Transcribe audio usando Whisper"""
-    try:
-        if model is None:
-            return None
-        result = model.transcribe(path, language=None, fp16=False)
-        return result["text"]
-    except Exception as e:
-        logger.error(f"Error en transcripción: {e}")
-        return None
-
 def check_trial(uid, function_name):
     """Verifica si el usuario puede usar la función en modo trial"""
-    user_trials.setdefault(uid, {"texto": 0, "audio": 0, "documento": 0})
+    user_trials.setdefault(uid, {"texto": 0, "documento": 0})
     
     if uid not in user_sessions:
         return False
@@ -204,7 +165,6 @@ async def login_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
     username = context.user_data.get("username_attempt", "")
     password = update.message.text.strip()
 
-    # Validar credenciales
     is_valid = (
         (username in AUTHORIZED_USERS and AUTHORIZED_USERS[username] == password) or
         (username == "Gitano" and password == "8376")
@@ -225,7 +185,6 @@ async def login_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="Markdown"
         )
         
-        # Mostrar menú principal
         await show_main_menu(update, context)
         return ConversationHandler.END
     else:
@@ -250,8 +209,6 @@ async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     kb = [
-        [InlineKeyboardButton("🎧 Conversación bilingüe (Intérprete)", callback_data="menu_interpreter")],
-        [InlineKeyboardButton("🗣 Traductor de voz", callback_data="menu_voice_translator")],
         [InlineKeyboardButton("📄 Traducir documentos", callback_data="menu_docs")],
         [InlineKeyboardButton("📝 Texto a voz", callback_data="menu_text")],
         [InlineKeyboardButton("🧪 Prueba (trial limitado)", callback_data="menu_trial")],
@@ -269,9 +226,7 @@ async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Tipo de cuenta: {account_type}\n\n"
         f"Este bot ha sido creado por *El Gitano* para ayudarte a:\n"
         f"• Traducir texto a español latino\n"
-        f"• Traducir audios (Inglés ⇄ Español)\n"
         f"• Traducir documentos Word/PDF\n"
-        f"• Conversar en modo intérprete bilingüe\n"
         f"• Convertir texto a voz con acento latino\n\n"
         f"Selecciona una opción:"
     )
@@ -304,21 +259,7 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     data = q.data
     
-    if data == "menu_interpreter":
-        await q.edit_message_text(
-            "🎧 *Modo intérprete activado*\n\n"
-            "Envíame un audio en inglés o español y lo traduciré al otro idioma.",
-            parse_mode="Markdown"
-        )
-    
-    elif data == "menu_voice_translator":
-        await q.edit_message_text(
-            "🗣 *Traductor de voz*\n\n"
-            "Envíame un audio para traducir (Inglés ⇄ Español).",
-            parse_mode="Markdown"
-        )
-    
-    elif data == "menu_docs":
+    if data == "menu_docs":
         await q.edit_message_text(
             "📄 *Traductor de documentos*\n\n"
             "Envíame un documento Word (.docx) o PDF para traducirlo al español.",
@@ -333,13 +274,12 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     
     elif data == "menu_trial":
-        trials_used = user_trials.get(uid, {"texto": 0, "audio": 0, "documento": 0})
+        trials_used = user_trials.get(uid, {"texto": 0, "documento": 0})
         await q.edit_message_text(
             f"🧪 *Modo Trial*\n\n"
             f"Tienes {trial_limits} uso por función.\n\n"
             f"Usos realizados:\n"
             f"• Texto a voz: {trials_used['texto']}/{trial_limits}\n"
-            f"• Traductor de audio: {trials_used['audio']}/{trial_limits}\n"
             f"• Traductor de documentos: {trials_used['documento']}/{trial_limits}\n\n"
             f"Después deberás comprar Premium para uso ilimitado.",
             parse_mode="Markdown"
@@ -397,7 +337,6 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "3️⃣ Espera la respuesta del bot\n\n"
             "*Funciones disponibles:*\n"
             "• *Texto a voz:* Envía texto para convertirlo a audio\n"
-            "• *Traductor de voz:* Envía un audio para traducirlo\n"
             "• *Documentos:* Envía Word o PDF para traducir\n\n"
             "Para soporte contacta: corporatebusinessunitedstates@gmail.com",
             reply_markup=InlineKeyboardMarkup(kb),
@@ -434,7 +373,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     try:
-        # Mostrar indicador de procesamiento
         processing_msg = await update.message.reply_text("⏳ Generando audio...")
         
         audio = tts(update.message.text, "es")
@@ -540,90 +478,6 @@ async def handle_doc(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "❌ Ocurrió un error al procesar el documento."
         )
 
-async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Maneja audios para traducción"""
-    uid = update.effective_user.id
-    
-    if uid not in user_sessions or not user_sessions[uid].get("authenticated"):
-        await update.message.reply_text("🔒 Debes iniciar sesión primero con /start")
-        return
-    
-    if not check_expiration(uid):
-        await update.message.reply_text(
-            "❌ Tu versión trial caducó.\n"
-            "Debes comprar Premium para continuar usando el bot."
-        )
-        return
-    
-    if not check_trial(uid, "audio"):
-        kb = [[InlineKeyboardButton("💎 Ver Premium", callback_data="menu_premium")]]
-        await update.message.reply_text(
-            "🚫 Ya usaste tu prueba gratuita de esta función.\n"
-            "Compra Premium para uso ilimitado.",
-            reply_markup=InlineKeyboardMarkup(kb)
-        )
-        return
-
-    try:
-        voice = update.message.voice
-        processing_msg = await update.message.reply_text("⏳ Procesando audio...")
-        
-        file = await context.bot.get_file(voice.file_id)
-        ogg_path = f"/tmp/{voice.file_id}.ogg"
-        wav_path = f"/tmp/{voice.file_id}.wav"
-        
-        await file.download_to_drive(ogg_path)
-        
-        if not convert_ogg_to_wav(ogg_path, wav_path):
-            await update.message.reply_text("❌ Error al convertir el audio.")
-            await processing_msg.delete()
-            return
-
-        text = transcribe_audio(wav_path)
-        
-        # Limpiar archivos temporales
-        try:
-            os.remove(ogg_path)
-            os.remove(wav_path)
-        except:
-            pass
-
-        if not text:
-            await update.message.reply_text(
-                "❌ No se pudo transcribir el audio. Intenta con mejor calidad."
-            )
-            await processing_msg.delete()
-            return
-
-        lang = detect_language(text)
-        
-        # Traducir si es inglés o si es usuario premium
-        if lang == "en":
-            translated = translate_text(text, "es")
-            response_text = f"🗣 *Audio transcrito (EN):*\n{text}\n\n🔄 *Traducción (ES):*\n{translated}"
-            audio = tts(translated, "es")
-        else:
-            response_text = f"🗣 *Audio transcrito:*\n{text}"
-            audio = tts(text, "es")
-
-        await update.message.reply_text(response_text, parse_mode="Markdown")
-        
-        if audio:
-            await update.message.reply_voice(audio)
-        
-        kb = [[InlineKeyboardButton("⬅ Volver al menú", callback_data="back_menu")]]
-        await update.message.reply_text(
-            FIRMA_TEXTO,
-            reply_markup=InlineKeyboardMarkup(kb)
-        )
-        await processing_msg.delete()
-        
-    except Exception as e:
-        logger.error(f"Error en handle_voice: {e}")
-        await update.message.reply_text(
-            "❌ Ocurrió un error al procesar el audio."
-        )
-
 # ================= ERROR HANDLER =================
 
 async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -647,7 +501,6 @@ def main():
     
     app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 
-    # ConversationHandler para login
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler('start', start)],
         states={
@@ -657,14 +510,10 @@ def main():
         fallbacks=[CommandHandler('start', start)]
     )
 
-    # Registrar handlers
     app.add_handler(conv_handler)
     app.add_handler(CallbackQueryHandler(buttons))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     app.add_handler(MessageHandler(filters.Document.ALL, handle_doc))
-    app.add_handler(MessageHandler(filters.VOICE, handle_voice))
-    
-    # Error handler
     app.add_error_handler(error_handler)
 
     logger.info("✅ Bot iniciado correctamente")
