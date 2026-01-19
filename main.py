@@ -1,6 +1,7 @@
 import os
 import logging
 import io
+import datetime
 import speech_recognition as sr
 from pydub import AudioSegment
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -13,56 +14,53 @@ import PyPDF2
 from deep_translator import GoogleTranslator
 from langdetect import detect
 from gtts import gTTS
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # ================= CONFIG =================
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 FIRMA = "By🦅𝓣𝓽ͭ𝓱ͪ𝓮ͤ𝓖𝓲𝓽ͭ𝓪ͣ𝓷𝓸 🦅"
+HIST_DIR = "conversaciones"
+
+os.makedirs(HIST_DIR, exist_ok=True)
 
 AVAILABLE_ACCENTS = {
-    'es-es': '🇪🇸 España',
-    'es-mx': '🇲🇽 México',
-    'es-ar': '🇦🇷 Argentina',
-    'es-co': '🇨🇴 Colombia',
-    'es-cl': '🇨🇱 Chile',
-    'es': '🌎 Español'
+    'es': 'Español',
+    'en': 'English'
 }
 
 SPEED_OPTIONS = {
-    'lento': {'speed': True, 'name': '🐌 Lento'},
-    'normal': {'speed': False, 'name': '✅ Normal'}
+    'lento': {'speed': True, 'name': 'Lento'},
+    'normal': {'speed': False, 'name': 'Normal'}
 }
 
 user_preferences = {}
 
-# ================= LOGGING =================
-logging.basicConfig(
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    level=logging.INFO
-)
+# ================= LOG =================
+logging.basicConfig(level=logging.INFO)
 
 # ================= UTILIDADES =================
+def save_history(uid, role, text):
+    file_path = os.path.join(HIST_DIR, f"user_{uid}.txt")
+    now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    with open(file_path, "a", encoding="utf-8") as f:
+        f.write(f"[{now}] {role}: {text}\n")
+
 def detect_language(text):
     try:
         return detect(text)
     except:
         return 'unknown'
 
-def translate_text(text, target='es'):
+def translate_text(text, target):
     try:
         return GoogleTranslator(source='auto', target=target).translate(text)
     except:
         return text
 
-def extract_text_from_pdf(file):
-    reader = PyPDF2.PdfReader(file)
-    return "\n".join(page.extract_text() or "" for page in reader.pages[:20])
-
-def extract_text_from_docx(file):
-    doc = Document(file)
-    return "\n".join(p.text for p in doc.paragraphs)
-
 def tts(text, lang, slow=False):
-    tts = gTTS(text=f"{text}\n\n{FIRMA}", lang=lang, slow=slow)
+    tts = gTTS(text=text, lang=lang, slow=slow)
     audio = io.BytesIO()
     tts.write_to_fp(audio)
     audio.seek(0)
@@ -79,56 +77,21 @@ def speech_to_text(audio_bytes):
         audio_data = recognizer.record(source)
         return recognizer.recognize_google(audio_data)
 
-# ================= COMANDOS =================
+# ================= START =================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     kb = [
         [InlineKeyboardButton("🎧 Conversación bilingüe", callback_data="bilingual")],
-        [InlineKeyboardButton("🗣 Cambiar acento", callback_data="accent_menu")],
-        [InlineKeyboardButton("⚡ Cambiar velocidad", callback_data="speed_menu")],
-        [InlineKeyboardButton("🔁 Traducción automática", callback_data="auto_toggle")]
+        [InlineKeyboardButton("📄 Exportar conversaciones", callback_data="export")]
     ]
 
     await update.message.reply_text(
-        "¡Hola! Soy tu bot de Text-to-Speech 100% GRATUITO\n\n"
-        "Funcionalidades:\n"
-        "• Texto → Voz\n"
-        "• PDF y Word → Voz\n"
-        "• Traducción automática\n"
-        "• Acentos latinos\n"
-        "• Velocidad ajustable\n"
-        "• 🎧 Conversación bilingüe por audio\n\n"
-        "Envíame texto, documentos o audios.\n\n"
+        "🤖 BOT INTÉRPRETE EMPRESARIAL\n\n"
+        "Texto, documentos, audios\n"
+        "Traducción automática\n"
+        "Subtítulos\n"
+        "Historial\n"
+        "Conversación bilingüe\n\n"
         "Selecciona una opción:",
-        reply_markup=InlineKeyboardMarkup(kb)
-    )
-
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "/start - Menú principal\n"
-        "/help - Ayuda\n"
-        "/config - Traducción automática\n"
-        "/accent - Cambiar acento\n"
-        "/speed - Cambiar velocidad\n\n"
-        "También puedes enviar texto, PDF, Word o audio.\n\n"
-        f"{FIRMA}"
-    )
-
-async def accent_command(update, context):
-    kb = [[InlineKeyboardButton(v, callback_data=f"accent_{k}")]
-          for k, v in AVAILABLE_ACCENTS.items()]
-    await update.message.reply_text("Selecciona acento:", reply_markup=InlineKeyboardMarkup(kb))
-
-async def speed_command(update, context):
-    kb = [[InlineKeyboardButton(v['name'], callback_data=f"speed_{k}")]
-          for k, v in SPEED_OPTIONS.items()]
-    await update.message.reply_text("Selecciona velocidad:", reply_markup=InlineKeyboardMarkup(kb))
-
-async def config_command(update, context):
-    uid = update.effective_user.id
-    auto = user_preferences.get(uid, {}).get('auto', False)
-    kb = [[InlineKeyboardButton("✅ ON" if auto else "❌ OFF", callback_data="auto_toggle")]]
-    await update.message.reply_text(
-        f"Traducción automática: {'ON' if auto else 'OFF'}",
         reply_markup=InlineKeyboardMarkup(kb)
     )
 
@@ -142,55 +105,16 @@ async def buttons(update, context):
     if q.data == "bilingual":
         user_preferences[uid]['bilingual'] = not user_preferences[uid].get('bilingual', False)
         estado = "ACTIVADO" if user_preferences[uid]['bilingual'] else "DESACTIVADO"
-        await q.edit_message_text(f"🎧 Conversación bilingüe: {estado}")
+        await q.edit_message_text(f"🎧 Modo intérprete: {estado}")
 
-    elif q.data == "auto_toggle":
-        user_preferences[uid]['auto'] = not user_preferences[uid].get('auto', False)
-        await q.edit_message_text("Traducción automática actualizada")
+    elif q.data == "export":
+        file_path = os.path.join(HIST_DIR, f"user_{uid}.txt")
+        if not os.path.exists(file_path):
+            await q.edit_message_text("No hay conversaciones registradas.")
+            return
+        await context.bot.send_document(chat_id=uid, document=open(file_path, "rb"))
 
-    elif q.data.startswith("accent_"):
-        user_preferences[uid]['accent'] = q.data.replace("accent_", "")
-        await q.edit_message_text("Acento actualizado")
-
-    elif q.data.startswith("speed_"):
-        user_preferences[uid]['speed'] = q.data.replace("speed_", "")
-        await q.edit_message_text("Velocidad actualizada")
-
-# ================= MENSAJES =================
-async def handle_text(update, context):
-    uid = update.effective_user.id
-    text = update.message.text
-
-    if detect_language(text) != 'es' and user_preferences.get(uid, {}).get('auto'):
-        text = translate_text(text, 'es')
-
-    lang = user_preferences.get(uid, {}).get('accent', 'es')
-    speed = user_preferences.get(uid, {}).get('speed', 'normal')
-    slow = SPEED_OPTIONS[speed]['speed']
-
-    audio = tts(text, lang, slow)
-    await update.message.reply_voice(audio)
-
-async def handle_doc(update, context):
-    doc = update.message.document
-    file = await context.bot.get_file(doc.file_id)
-    data = await file.download_as_bytearray()
-    stream = io.BytesIO(data)
-
-    if doc.file_name.endswith('.pdf'):
-        text = extract_text_from_pdf(stream)
-    else:
-        text = extract_text_from_docx(stream)
-
-    uid = update.effective_user.id
-    lang = user_preferences.get(uid, {}).get('accent', 'es')
-    speed = user_preferences.get(uid, {}).get('speed', 'normal')
-    slow = SPEED_OPTIONS[speed]['speed']
-
-    audio = tts(text, lang, slow)
-    await update.message.reply_voice(audio)
-
-# ================= AUDIO BILINGÜE =================
+# ================= AUDIO =================
 async def handle_voice(update, context):
     uid = update.effective_user.id
 
@@ -201,39 +125,32 @@ async def handle_voice(update, context):
     audio_bytes = await voice.download_as_bytearray()
 
     try:
-        text = speech_to_text(audio_bytes)
+        original_text = speech_to_text(audio_bytes)
     except:
         await update.message.reply_text("No pude reconocer el audio.")
         return
 
-    lang = detect_language(text)
+    lang = detect_language(original_text)
 
     if lang == "es":
-        translated = translate_text(text, "en")
+        translated = translate_text(original_text, "en")
         audio = tts(translated, "en")
     else:
-        translated = translate_text(text, "es")
+        translated = translate_text(original_text, "es")
         audio = tts(translated, "es")
 
+    save_history(uid, "Usuario", original_text)
+    save_history(uid, "Bot", translated)
+
+    await update.message.reply_text(f"📝 Subtítulos:\n{original_text}\n\n🌍 Traducción:\n{translated}")
     await update.message.reply_voice(audio)
 
 # ================= MAIN =================
 def main():
-    if not TELEGRAM_BOT_TOKEN:
-        print("TOKEN NO CONFIGURADO")
-        return
-
     app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("help", help_command))
-    app.add_handler(CommandHandler("accent", accent_command))
-    app.add_handler(CommandHandler("speed", speed_command))
-    app.add_handler(CommandHandler("config", config_command))
-
     app.add_handler(CallbackQueryHandler(buttons))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
-    app.add_handler(MessageHandler(filters.Document.ALL, handle_doc))
     app.add_handler(MessageHandler(filters.VOICE, handle_voice))
 
     app.run_polling()
