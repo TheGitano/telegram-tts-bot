@@ -1,6 +1,8 @@
 python-telegram-bot==20.5
-PyPDF2==3.0.1
-python-docx==1.1.0
-gTTS==2.4.0
-deep-translator==1.11.4
-langdetect==1.0.9
+PyPDF2
+python-docx
+gTTS
+deep-translator
+langdetect
+SpeechRecognition
+pydub
