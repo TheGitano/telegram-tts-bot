@@ -20,7 +20,6 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 FIRMA_TEXTO = "¡¡ Esto fue realizado por 🦅𝓣𝓽ͭ𝓱ͪ𝓮ͤ𝓖𝓲𝓽ͭ𝓪ͣ𝓷𝓸 🦅 !!"
 
 model = whisper.load_model("base")
-
 user_preferences = {}
 
 # ================= LOGGING =================
@@ -28,8 +27,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # ================= UTILIDADES =================
-
-def translate_text(text, target):
+def translate_text(text, target="es"):
     translator = GoogleTranslator(source='auto', target=target)
     return translator.translate(text)
 
@@ -61,25 +59,26 @@ def transcribe_audio(path):
     result = model.transcribe(path)
     return result["text"]
 
-# ================= MENÚ =================
+# ================= MENÚ VISUAL PREMIUM =================
 
 async def show_main_menu(update, context):
     kb = [
-        [InlineKeyboardButton("🎧 Conversación bilingüe (INTÉRPRETE)", callback_data="menu_interpreter")],
+        [InlineKeyboardButton("🎧 Conversación bilingüe", callback_data="menu_interpreter")],
         [InlineKeyboardButton("📄 Traducir PDF o Word", callback_data="menu_docs")],
         [InlineKeyboardButton("📝 Texto a Voz", callback_data="menu_text")],
+        [InlineKeyboardButton("⚙ Configuración", callback_data="menu_config")],
         [InlineKeyboardButton("❓ Ayuda", callback_data="menu_help")]
     ]
 
     text = (
-        "🎙 BOT INTÉRPRETE PRO\n\n"
+        "🎙 *BOT INTÉRPRETE PRO — MENÚ PRINCIPAL*\n\n"
         "Selecciona una opción:"
     )
 
     if update.message:
-        await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(kb))
+        await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
     else:
-        await update.callback_query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb))
+        await update.callback_query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
 
 async def interpreter_menu(update, context):
     uid = update.effective_user.id
@@ -91,17 +90,31 @@ async def interpreter_menu(update, context):
 
     kb = [
         [InlineKeyboardButton(toggle_text, callback_data="toggle_interpreter")],
-        [InlineKeyboardButton("⬅ Volver", callback_data="back_menu")]
+        [InlineKeyboardButton("⬅ Volver al menú", callback_data="back_menu")]
     ]
 
     text = (
-        "🎧 MODO INTÉRPRETE\n\n"
+        "🎧 *MODO INTÉRPRETE*\n\n"
         "Traducción por voz en tiempo real\n"
-        "Español ⇄ Inglés\n\n"
-        f"Estado: {status_text}"
+        "🇪🇸 Español ⇄ 🇺🇸 Inglés\n\n"
+        f"Estado actual: {status_text}"
     )
 
-    await update.callback_query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb))
+    await update.callback_query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
+
+async def config_menu(update, context):
+    uid = update.effective_user.id
+    user_preferences.setdefault(uid, {})
+    auto = user_preferences[uid].get('auto', True)
+    auto_text = "✅ ON" if auto else "❌ OFF"
+
+    kb = [
+        [InlineKeyboardButton(f"🌎 Traducción automática: {auto_text}", callback_data="toggle_auto")],
+        [InlineKeyboardButton("⬅ Volver al menú", callback_data="back_menu")]
+    ]
+
+    text = "⚙ *CONFIGURACIÓN DEL BOT*"
+    await update.callback_query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
 
 # ================= BOTONES =================
 
@@ -113,25 +126,24 @@ async def buttons(update, context):
 
     if q.data == "menu_interpreter":
         await interpreter_menu(update, context)
-
     elif q.data == "menu_docs":
         await q.edit_message_text("📄 Envíame un archivo PDF o Word para traducirlo.")
-
     elif q.data == "menu_text":
         await q.edit_message_text("📝 Escríbeme el texto que deseas convertir a audio.")
-
     elif q.data == "menu_help":
         await q.edit_message_text(
-            "❓ Ayuda\n\n"
+            "❓ *Ayuda*\n\n"
             "• Envía texto para convertir a voz\n"
             "• Envía audio para traducir\n"
-            "• Activa modo intérprete para conversar"
+            "• Activa modo intérprete para conversar",
+            parse_mode="Markdown"
         )
-
     elif q.data == "toggle_interpreter":
         user_preferences[uid]["interpreter"] = not user_preferences[uid].get("interpreter", False)
         await interpreter_menu(update, context)
-
+    elif q.data == "toggle_auto":
+        user_preferences[uid]["auto"] = not user_preferences[uid].get("auto", True)
+        await config_menu(update, context)
     elif q.data == "back_menu":
         await show_main_menu(update, context)
 
@@ -148,11 +160,14 @@ async def handle_text(update, context):
 
     audio = tts(text, "es")
     await update.message.reply_voice(audio)
-    await update.message.reply_text(FIRMA_TEXTO)
+
+    kb = [[InlineKeyboardButton("⬅ Volver al menú", callback_data="back_menu")]]
+    await update.message.reply_text(FIRMA_TEXTO, reply_markup=InlineKeyboardMarkup(kb))
 
 # ================= DOCUMENTOS =================
 
 async def handle_doc(update, context):
+    uid = update.effective_user.id
     doc = update.message.document
     file = await context.bot.get_file(doc.file_id)
     data = await file.download_as_bytearray()
@@ -165,9 +180,10 @@ async def handle_doc(update, context):
 
     translated = translate_text(text, "es")
     audio = tts(translated, "es")
-
     await update.message.reply_voice(audio)
-    await update.message.reply_text(FIRMA_TEXTO)
+
+    kb = [[InlineKeyboardButton("⬅ Volver al menú", callback_data="back_menu")]]
+    await update.message.reply_text(FIRMA_TEXTO, reply_markup=InlineKeyboardMarkup(kb))
 
 # ================= AUDIO =================
 
@@ -185,17 +201,19 @@ async def handle_voice(update, context):
     convert_ogg_to_wav(ogg_path, wav_path)
 
     text = transcribe_audio(wav_path)
+    lang = detect_language(text)
 
-    if prefs.get("interpreter"):
-        lang = detect_language(text)
-        target = "es" if lang == "en" else "en"
-        translated = translate_text(text, target)
-        audio = tts(translated, target)
+    # Traducción automática si es inglés o modo intérprete activado
+    if lang == "en" or prefs.get("interpreter"):
+        translated = translate_text(text, "es")
+        audio = tts(translated, "es")
         await update.message.reply_voice(audio)
     else:
         audio = tts(text, "es")
         await update.message.reply_voice(audio)
-        await update.message.reply_text(FIRMA_TEXTO)
+
+    kb = [[InlineKeyboardButton("⬅ Volver al menú", callback_data="back_menu")]]
+    await update.message.reply_text(FIRMA_TEXTO, reply_markup=InlineKeyboardMarkup(kb))
 
 # ================= MAIN =================
 
