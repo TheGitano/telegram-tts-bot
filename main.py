@@ -1,9 +1,6 @@
 import os
-import io
 import logging
-import asyncio
-import speech_recognition as sr
-from pydub import AudioSegment
+import io
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application, CommandHandler, MessageHandler, filters,
@@ -17,7 +14,6 @@ from gtts import gTTS
 
 # ================= CONFIG =================
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-
 FIRMA_TEXTO = "¡¡ Esto fue realizado por 🦅𝓣𝓽ͭ𝓱ͪ𝓮ͤ𝓖𝓲𝓽ͭ𝓪ͣ𝓷𝓸 🦅 !!"
 
 AVAILABLE_ACCENTS = {
@@ -27,15 +23,18 @@ AVAILABLE_ACCENTS = {
 }
 
 SPEED_OPTIONS = {
-    'lento': {'speed': True, 'name': '🐌 Lento'},
-    'normal': {'speed': False, 'name': '✅ Normal'}
+    'normal': {'speed': False, 'name': 'Normal'},
+    'lento': {'speed': True, 'name': 'Lento'}
 }
 
 user_preferences = {}
-pending_docs = {}
 
-# ================= LOG =================
-logging.basicConfig(level=logging.INFO)
+# ================= LOGGING =================
+logging.basicConfig(
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
 
 # ================= UTILIDADES =================
 def detect_language(text):
@@ -44,8 +43,9 @@ def detect_language(text):
     except:
         return 'unknown'
 
-def translate_to_spanish(text):
-    return GoogleTranslator(source='auto', target='es').translate(text)
+def translate_text(text, target='es'):
+    translator = GoogleTranslator(source='auto', target=target)
+    return translator.translate(text)
 
 def extract_text_from_pdf(file):
     reader = PyPDF2.PdfReader(file)
@@ -55,138 +55,157 @@ def extract_text_from_docx(file):
     doc = Document(file)
     return "\n".join(p.text for p in doc.paragraphs)
 
-def tts(text, accent, slow):
+def tts(text, user_id):
+    prefs = user_preferences.get(user_id, {})
+    accent = prefs.get('accent', 'es-us')
+    speed = prefs.get('speed', 'normal')
+    slow = SPEED_OPTIONS[speed]['speed']
+
     tts = gTTS(text=text, lang=accent, slow=slow)
     audio = io.BytesIO()
     tts.write_to_fp(audio)
     audio.seek(0)
     return audio
 
-def speech_to_text(audio_bytes):
-    recognizer = sr.Recognizer()
-    audio = AudioSegment.from_file(io.BytesIO(audio_bytes))
-    wav = io.BytesIO()
-    audio.export(wav, format="wav")
-    wav.seek(0)
-    with sr.AudioFile(wav) as source:
-        audio_data = recognizer.record(source)
-        return recognizer.recognize_google(audio_data)
+# ================= MENÚ PRINCIPAL =================
 
-# ================= COMANDOS =================
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "¡Hola! Soy tu bot de Text-to-Speech 100% GRATUITO\n\n"
-        "Funcionalidades:\n"
-        "Convierte texto a voz\n"
-        "Lee archivos PDF y Word\n"
-        "Traduce automáticamente a español latino\n"
-        "Múltiples acentos\n"
-        "Velocidad ajustable\n"
-        "🎧 Conversación bilingüe por audio\n\n"
-        "Comandos:\n"
-        "/start - Ver este mensaje\n"
-        "/help - Ayuda\n"
-        "/config - Configuración\n"
-        "/accent - Cambiar acento\n"
-        "/speed - Cambiar velocidad\n"
-    )
-
-async def help_command(update, context):
-    await update.message.reply_text(
-        "Envíame texto, PDF, Word o audio.\n"
-        "El bot traducirá todo al español latino automáticamente.\n"
-    )
-
-async def accent_command(update, context):
-    kb = [[InlineKeyboardButton(v, callback_data=f"accent_{k}")]
-          for k, v in AVAILABLE_ACCENTS.items()]
-    await update.message.reply_text("Selecciona acento:", reply_markup=InlineKeyboardMarkup(kb))
-
-async def speed_command(update, context):
-    kb = [[InlineKeyboardButton(v['name'], callback_data=f"speed_{k}")]
-          for k, v in SPEED_OPTIONS.items()]
-    await update.message.reply_text("Selecciona velocidad:", reply_markup=InlineKeyboardMarkup(kb))
-
-async def config_command(update, context):
-    uid = update.effective_user.id
-    auto = user_preferences.get(uid, {}).get('auto', True)
-    bilingual = user_preferences.get(uid, {}).get('bilingual', False)
-
+async def show_main_menu(update, context):
     kb = [
-        [InlineKeyboardButton("Traducción automática: " + ("ON" if auto else "OFF"), callback_data="auto")],
-        [InlineKeyboardButton("🎧 Modo intérprete: " + ("ON" if bilingual else "OFF"), callback_data="bilingual")]
+        [InlineKeyboardButton("🎧 Conversación bilingüe (INTÉRPRETE)", callback_data="menu_interpreter")],
+        [InlineKeyboardButton("📄 Traducir PDF o Word", callback_data="menu_docs")],
+        [InlineKeyboardButton("📝 Texto a Voz", callback_data="menu_text")],
+        [InlineKeyboardButton("⚙ Configuración", callback_data="menu_config")],
+        [InlineKeyboardButton("❓ Ayuda", callback_data="menu_help")]
     ]
 
-    await update.message.reply_text("Configuración:", reply_markup=InlineKeyboardMarkup(kb))
+    text = (
+        "🎙 *BOT TEXT TO SPEECH PRO — 100% GRATIS*\n\n"
+        "Selecciona una opción:"
+    )
+
+    if update.message:
+        await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
+    else:
+        await update.callback_query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
+
+# ================= MENÚ INTÉRPRETE =================
+
+async def interpreter_menu(update, context):
+    uid = update.effective_user.id
+    user_preferences.setdefault(uid, {})
+    status = user_preferences[uid].get("bilingual", False)
+
+    status_text = "✅ ACTIVADO" if status else "❌ DESACTIVADO"
+    toggle_text = "❌ DESACTIVAR INTÉRPRETE" if status else "✅ ACTIVAR INTÉRPRETE"
+
+    kb = [
+        [InlineKeyboardButton(toggle_text, callback_data="toggle_interpreter")],
+        [InlineKeyboardButton("⬅ Volver al menú", callback_data="back_menu")]
+    ]
+
+    text = (
+        "🎧 *MODO INTÉRPRETE*\n\n"
+        "Convierte audio automáticamente:\n"
+        "🇪🇸 Español ⇄ Inglés\n\n"
+        f"Estado actual: {status_text}"
+    )
+
+    await update.callback_query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
+
+# ================= CONFIG =================
+
+async def config_menu(update, context):
+    uid = update.effective_user.id
+    user_preferences.setdefault(uid, {})
+    auto = user_preferences[uid].get('auto', True)
+
+    auto_text = "ON" if auto else "OFF"
+
+    kb = [
+        [InlineKeyboardButton(f"🌎 Traducción automática: {auto_text}", callback_data="toggle_auto")],
+        [InlineKeyboardButton("⬅ Volver al menú", callback_data="back_menu")]
+    ]
+
+    text = "⚙ *Configuración del bot*"
+
+    await update.callback_query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
+
+# ================= COMANDOS =================
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await show_main_menu(update, context)
+
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "❓ Ayuda\n\n"
+        "• Envia texto para convertir a voz\n"
+        "• Envia PDF o Word para traducir\n"
+        "• Usa el modo intérprete para conversar\n\n"
+        "100% GRATIS — Sin límites"
+    )
 
 # ================= BOTONES =================
+
 async def buttons(update, context):
     q = update.callback_query
     await q.answer()
     uid = update.effective_user.id
-    user_preferences.setdefault(uid, {'auto': True})
+    user_preferences.setdefault(uid, {})
 
-    if q.data == "auto":
-        user_preferences[uid]['auto'] = not user_preferences[uid]['auto']
-        await q.edit_message_text("Configuración actualizada")
+    if q.data == "menu_interpreter":
+        await interpreter_menu(update, context)
 
-    elif q.data == "bilingual":
-        user_preferences[uid]['bilingual'] = not user_preferences[uid].get('bilingual', False)
-        await q.edit_message_text("Modo intérprete actualizado")
+    elif q.data == "menu_docs":
+        await q.edit_message_text("📄 Envíame un archivo PDF o Word para traducirlo.")
 
-    elif q.data.startswith("accent_"):
-        user_preferences[uid]['accent'] = q.data.replace("accent_", "")
-        await q.edit_message_text("Acento actualizado")
+    elif q.data == "menu_text":
+        await q.edit_message_text("📝 Escríbeme el texto que deseas convertir a voz.")
 
-    elif q.data.startswith("speed_"):
-        user_preferences[uid]['speed'] = q.data.replace("speed_", "")
-        await q.edit_message_text("Velocidad actualizada")
+    elif q.data == "menu_config":
+        await config_menu(update, context)
 
-    elif q.data == "doc_yes":
-        file = pending_docs.pop(uid)
-        await process_document(update, context, file)
+    elif q.data == "menu_help":
+        await q.edit_message_text(
+            "❓ Ayuda\n\n"
+            "Envía texto o documentos.\n"
+            "Usa el modo intérprete para conversar."
+        )
 
-    elif q.data == "doc_no":
-        pending_docs.pop(uid)
-        await q.edit_message_text("Documento cancelado.")
+    elif q.data == "toggle_interpreter":
+        user_preferences[uid]["bilingual"] = not user_preferences[uid].get("bilingual", False)
+        await interpreter_menu(update, context)
 
-# ================= TEXTO =================
+    elif q.data == "toggle_auto":
+        user_preferences[uid]["auto"] = not user_preferences[uid].get("auto", True)
+        await config_menu(update, context)
+
+    elif q.data == "back_menu":
+        await show_main_menu(update, context)
+
+# ================= MENSAJES =================
+
 async def handle_text(update, context):
     uid = update.effective_user.id
-    user_preferences.setdefault(uid, {'auto': True})
-
+    user_preferences.setdefault(uid, {})
     text = update.message.text
 
-    if user_preferences[uid]['auto']:
-        text = translate_to_spanish(text)
+    if user_preferences[uid].get("bilingual"):
+        lang = detect_language(text)
+        target = "es" if lang == "en" else "en"
+        text = translate_text(text, target)
 
-    accent = user_preferences.get(uid, {}).get('accent', 'es-us')
-    speed = user_preferences.get(uid, {}).get('speed', 'normal')
-    slow = SPEED_OPTIONS[speed]['speed']
+    elif user_preferences[uid].get("auto", True):
+        if detect_language(text) != 'es':
+            text = translate_text(text, 'es')
 
-    audio = tts(text, accent, slow)
+    audio = tts(text, uid)
     await update.message.reply_voice(audio)
     await update.message.reply_text(FIRMA_TEXTO)
 
-# ================= DOCUMENTOS =================
 async def handle_doc(update, context):
     uid = update.effective_user.id
-    pending_docs[uid] = update.message.document
-
-    kb = [
-        [InlineKeyboardButton("✅ SI", callback_data="doc_yes")],
-        [InlineKeyboardButton("❌ NO", callback_data="doc_no")]
-    ]
-
-    await update.message.reply_text(
-        "⚠️ Este documento será traducido al español.\n"
-        "⏳ La traducción será eliminada en 24hs.\n\n"
-        "¿Deseas continuar?",
-        reply_markup=InlineKeyboardMarkup(kb)
-    )
-
-async def process_document(update, context, doc):
-    uid = update.effective_user.id
+    user_preferences.setdefault(uid, {})
+    doc = update.message.document
     file = await context.bot.get_file(doc.file_id)
     data = await file.download_as_bytearray()
     stream = io.BytesIO(data)
@@ -196,55 +215,26 @@ async def process_document(update, context, doc):
     else:
         text = extract_text_from_docx(stream)
 
-    text = translate_to_spanish(text)
+    text = translate_text(text, 'es')
+    audio = tts(text, uid)
 
-    accent = user_preferences.get(uid, {}).get('accent', 'es-us')
-    speed = user_preferences.get(uid, {}).get('speed', 'normal')
-    slow = SPEED_OPTIONS[speed]['speed']
-
-    audio = tts(text, accent, slow)
-    await update.callback_query.message.reply_voice(audio)
-    await update.callback_query.message.reply_text(FIRMA_TEXTO)
-
-# ================= AUDIO INTÉRPRETE =================
-async def handle_voice(update, context):
-    uid = update.effective_user.id
-    if not user_preferences.get(uid, {}).get("bilingual"):
-        return
-
-    voice = await context.bot.get_file(update.message.voice.file_id)
-    audio_bytes = await voice.download_as_bytearray()
-
-    text = speech_to_text(audio_bytes)
-    lang = detect_language(text)
-
-    if lang == "es":
-        translated = GoogleTranslator(source='auto', target='en').translate(text)
-        audio = gTTS(translated, lang="en")
-    else:
-        translated = GoogleTranslator(source='auto', target='es').translate(text)
-        audio = gTTS(translated, lang="es")
-
-    out = io.BytesIO()
-    audio.write_to_fp(out)
-    out.seek(0)
-
-    await update.message.reply_voice(out)
+    await update.message.reply_voice(audio)
+    await update.message.reply_text(FIRMA_TEXTO)
 
 # ================= MAIN =================
+
 def main():
+    if not TELEGRAM_BOT_TOKEN:
+        print("TOKEN NO CONFIGURADO")
+        return
+
     app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
-    app.add_handler(CommandHandler("accent", accent_command))
-    app.add_handler(CommandHandler("speed", speed_command))
-    app.add_handler(CommandHandler("config", config_command))
-
     app.add_handler(CallbackQueryHandler(buttons))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     app.add_handler(MessageHandler(filters.Document.ALL, handle_doc))
-    app.add_handler(MessageHandler(filters.VOICE, handle_voice))
 
     app.run_polling()
 
