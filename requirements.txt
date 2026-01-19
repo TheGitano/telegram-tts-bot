@@ -4,6 +4,6 @@ python-docx
 gTTS
 deep-translator
 langdetect
-openai-whisper
+whisper
 torch
 ffmpeg-python
