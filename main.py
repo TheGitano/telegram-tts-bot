@@ -19,8 +19,12 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 FIRMA = "By🦅𝓣𝓽ͭ𝓱ͪ𝓮ͤ𝓖𝓲𝓽ͭ𝓪ͣ𝓷𝓸 🦅"
 
 AVAILABLE_ACCENTS = {
-    'es': '🇪🇸 Español',
-    'en': '🇺🇸 English'
+    'es-es': '🇪🇸 España',
+    'es-mx': '🇲🇽 México',
+    'es-ar': '🇦🇷 Argentina',
+    'es-co': '🇨🇴 Colombia',
+    'es-cl': '🇨🇱 Chile',
+    'es': '🌎 Español'
 }
 
 SPEED_OPTIONS = {
@@ -44,11 +48,19 @@ def detect_language(text):
     except:
         return 'unknown'
 
-def translate_text(text, target):
+def translate_text(text, target='es'):
     try:
         return GoogleTranslator(source='auto', target=target).translate(text)
     except:
         return text
+
+def extract_text_from_pdf(file):
+    reader = PyPDF2.PdfReader(file)
+    return "\n".join(page.extract_text() or "" for page in reader.pages[:20])
+
+def extract_text_from_docx(file):
+    doc = Document(file)
+    return "\n".join(p.text for p in doc.paragraphs)
 
 def tts(text, lang, slow=False):
     tts = gTTS(text=f"{text}\n\n{FIRMA}", lang=lang, slow=slow)
@@ -72,30 +84,58 @@ def speech_to_text(audio_bytes):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     kb = [
         [InlineKeyboardButton("🎧 Conversación bilingüe", callback_data="bilingual")],
-        [InlineKeyboardButton("🗣 Acento", callback_data="accent_menu")],
-        [InlineKeyboardButton("⚡ Velocidad", callback_data="speed_menu")]
+        [InlineKeyboardButton("🗣 Cambiar acento", callback_data="accent_menu")],
+        [InlineKeyboardButton("⚡ Cambiar velocidad", callback_data="speed_menu")],
+        [InlineKeyboardButton("🔁 Traducción automática", callback_data="auto_menu")]
     ]
 
     await update.message.reply_text(
-        "🤖 BOT INTÉRPRETE BILINGÜE\n\n"
-        "Modo conversación automática entre Español ↔ Inglés\n\n"
+        "¡Hola! Soy tu bot de Text-to-Speech 100% GRATUITO\n\n"
+        "Funcionalidades:\n"
+        "• Convierte texto a voz (sin límites)\n"
+        "• Lee archivos PDF y Word\n"
+        "• Traduce automáticamente a español\n"
+        "• Múltiples acentos latinos\n"
+        "• Velocidad ajustable\n"
+        "• 🎧 Conversación bilingüe por audio\n\n"
+        "Cómo usarme:\n"
+        "Envíame texto, PDF, Word o audio\n\n"
         "Selecciona una opción:",
         reply_markup=InlineKeyboardMarkup(kb)
     )
 
-async def accent_menu(update, context):
-    kb = [[InlineKeyboardButton(v, callback_data=f"accent_{k}")]
-          for k, v in AVAILABLE_ACCENTS.items()]
-    await update.callback_query.edit_message_text(
-        "Selecciona idioma de voz:",
-        reply_markup=InlineKeyboardMarkup(kb)
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "Comandos disponibles:\n"
+        "/start - Ver menú principal\n"
+        "/help - Ayuda\n"
+        "/config - Traducción automática\n"
+        "/accent - Cambiar acento\n"
+        "/speed - Cambiar velocidad\n\n"
+        "También puedes enviar:\n"
+        "• Texto\n"
+        "• PDF\n"
+        "• Word\n"
+        "• Audio (modo bilingüe)\n\n"
+        f"{FIRMA}"
     )
 
-async def speed_menu(update, context):
+async def accent_command(update, context):
+    kb = [[InlineKeyboardButton(v, callback_data=f"accent_{k}")]
+          for k, v in AVAILABLE_ACCENTS.items()]
+    await update.message.reply_text("Selecciona acento:", reply_markup=InlineKeyboardMarkup(kb))
+
+async def speed_command(update, context):
     kb = [[InlineKeyboardButton(v['name'], callback_data=f"speed_{k}")]
           for k, v in SPEED_OPTIONS.items()]
-    await update.callback_query.edit_message_text(
-        "Selecciona velocidad:",
+    await update.message.reply_text("Selecciona velocidad:", reply_markup=InlineKeyboardMarkup(kb))
+
+async def config_command(update, context):
+    uid = update.effective_user.id
+    auto = user_preferences.get(uid, {}).get('auto', False)
+    kb = [[InlineKeyboardButton("✅ ON" if auto else "❌ OFF", callback_data="auto_toggle")]]
+    await update.message.reply_text(
+        f"Traducción automática: {'ON' if auto else 'OFF'}",
         reply_markup=InlineKeyboardMarkup(kb)
     )
 
@@ -109,19 +149,58 @@ async def buttons(update, context):
     if q.data == "bilingual":
         user_preferences[uid]['bilingual'] = not user_preferences[uid].get('bilingual', False)
         estado = "ACTIVADO" if user_preferences[uid]['bilingual'] else "DESACTIVADO"
-        await q.edit_message_text(f"🎧 Modo conversación bilingüe: {estado}")
+        await q.edit_message_text(f"🎧 Conversación bilingüe: {estado}")
+
+    elif q.data == "auto_toggle":
+        user_preferences[uid]['auto'] = not user_preferences[uid].get('auto', False)
+        await q.edit_message_text("Configuración actualizada")
 
     elif q.data.startswith("accent_"):
         user_preferences[uid]['accent'] = q.data.replace("accent_", "")
-        await q.edit_message_text("✅ Idioma de voz actualizado")
+        await q.edit_message_text("Acento actualizado")
 
     elif q.data.startswith("speed_"):
         user_preferences[uid]['speed'] = q.data.replace("speed_", "")
-        await q.edit_message_text("✅ Velocidad actualizada")
+        await q.edit_message_text("Velocidad actualizada")
 
-# ================= AUDIO =================
+# ================= MENSAJES =================
+async def handle_text(update, context):
+    uid = update.effective_user.id
+    text = update.message.text
+
+    if detect_language(text) != 'es' and user_preferences.get(uid, {}).get('auto'):
+        text = translate_text(text, 'es')
+
+    lang = user_preferences.get(uid, {}).get('accent', 'es')
+    speed = user_preferences.get(uid, {}).get('speed', 'normal')
+    slow = SPEED_OPTIONS[speed]['speed']
+
+    audio = tts(text, lang, slow)
+    await update.message.reply_voice(audio)
+
+async def handle_doc(update, context):
+    doc = update.message.document
+    file = await context.bot.get_file(doc.file_id)
+    data = await file.download_as_bytearray()
+    stream = io.BytesIO(data)
+
+    if doc.file_name.endswith('.pdf'):
+        text = extract_text_from_pdf(stream)
+    else:
+        text = extract_text_from_docx(stream)
+
+    uid = update.effective_user.id
+    lang = user_preferences.get(uid, {}).get('accent', 'es')
+    speed = user_preferences.get(uid, {}).get('speed', 'normal')
+    slow = SPEED_OPTIONS[speed]['speed']
+
+    audio = tts(text, lang, slow)
+    await update.message.reply_voice(audio)
+
+# ================= AUDIO BILINGÜE =================
 async def handle_voice(update, context):
     uid = update.effective_user.id
+
     if not user_preferences.get(uid, {}).get("bilingual"):
         return
 
@@ -154,7 +233,14 @@ def main():
     app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("help", help_command))
+    app.add_handler(CommandHandler("accent", accent_command))
+    app.add_handler(CommandHandler("speed", speed_command))
+    app.add_handler(CommandHandler("config", config_command))
+
     app.add_handler(CallbackQueryHandler(buttons))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+    app.add_handler(MessageHandler(filters.Document.ALL, handle_doc))
     app.add_handler(MessageHandler(filters.VOICE, handle_voice))
 
     app.run_polling()
