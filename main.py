@@ -194,34 +194,95 @@ async def plan_premium(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def premium_login(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    await query.edit_message_text("━━━━━━━━━━━━━━━━━━━━━━\n🔐 *INICIO DE SESIÓN PREMIUM* 🔐\n━━━━━━━━━━━━━━━━━━━━━━\n\nPor favor, ingresa tu *USUARIO*:", parse_mode="Markdown")
+    await query.edit_message_text(
+        "━━━━━━━━━━━━━━━━━━━━━━\n"
+        "🔐 *INICIO DE SESIÓN PREMIUM* 🔐\n"
+        "━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        "```\n"
+        "╔═══════════════════════════════════╗\n"
+        "║   SISTEMA DE AUTENTICACIÓN v2.0   ║\n"
+        "║         [ACCESO RESTRINGIDO]      ║\n"
+        "╚═══════════════════════════════════╝\n"
+        "```\n\n"
+        "Por favor, envía tus credenciales en el siguiente formato:\n\n"
+        "*Usuario:*\n"
+        "*Contraseña:*\n\n"
+        "━━━━━━━━━━━━━━━━━━━━━━\n"
+        "*Ejemplo:*\n"
+        "```\n"
+        "Usuario: Gitano\n"
+        "Contraseña: 8376\n"
+        "```\n"
+        "━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        "🔒 Envía ambos datos en un solo mensaje:",
+        parse_mode="Markdown"
+    )
     return PREMIUM_USERNAME
 
 async def premium_username(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data["premium_username_attempt"] = update.message.text.strip()
-    await update.message.reply_text("🔑 Ahora ingresa tu *CONTRASEÑA*:", parse_mode="Markdown")
-    return PREMIUM_PASSWORD
-
-async def premium_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Procesa las credenciales enviadas juntas"""
     uid = update.effective_user.id
-    username = context.user_data.get("premium_username_attempt", "")
-    password = update.message.text.strip()
+    credentials = update.message.text.strip()
     
-    if username in PREMIUM_USERS and PREMIUM_USERS[username]["password"] == password:
+    # Intentar extraer usuario y contraseña del texto
+    lines = credentials.split('\n')
+    username = None
+    password = None
+    
+    for line in lines:
+        line = line.strip()
+        if 'usuario:' in line.lower():
+            username = line.split(':', 1)[1].strip()
+        elif 'contraseña:' in line.lower() or 'password:' in line.lower():
+            password = line.split(':', 1)[1].strip()
+    
+    # Validar credenciales
+    if username and password and username in PREMIUM_USERS and PREMIUM_USERS[username]["password"] == password:
         if datetime.now() > PREMIUM_USERS[username]["expires"]:
             await update.message.reply_text("❌ *Tu licencia Premium ha expirado.*\n\nPor favor, renueva tu suscripción.", parse_mode="Markdown")
             return await start(update, context)
         
+        # Login exitoso
         active_sessions[uid] = username
         name = PREMIUM_USERS[username]["name"]
         days_left = max(0, (PREMIUM_USERS[username]["expires"] - datetime.now()).days)
         
-        await update.message.reply_text(f"━━━━━━━━━━━━━━━━━━━━━━\n🎉 *¡BIENVENIDO SR. {name.upper()}!* 🎉\n━━━━━━━━━━━━━━━━━━━━━━\n\n✅ Inicio de sesión exitoso\n⏰ Te quedan *{days_left} días* de tu licencia Premium\n\n━━━━━━━━━━━━━━━━━━━━━━", parse_mode="Markdown")
+        await update.message.reply_text(
+            "```\n"
+            "╔═══════════════════════════════════╗\n"
+            "║      ACCESO AUTORIZADO ✓          ║\n"
+            "║   Verificando credenciales...     ║\n"
+            "║   [████████████████████] 100%     ║\n"
+            "╚═══════════════════════════════════╝\n"
+            "```\n\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"🎉 *¡BIENVENIDO {username.upper()}!* 🎉\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"✅ Inicio de sesión exitoso\n"
+            f"⏰ Te quedan *{days_left} días* de tu licencia Premium\n\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━",
+            parse_mode="Markdown"
+        )
         return await show_premium_menu(update, context)
     else:
         keyboard = [[InlineKeyboardButton("🔙 Volver", callback_data="plan_premium")]]
-        await update.message.reply_text("❌ *Usuario o contraseña incorrectos.*\n\nIntenta nuevamente.", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+        await update.message.reply_text(
+            "```\n"
+            "╔═══════════════════════════════════╗\n"
+            "║      ACCESO DENEGADO ✗            ║\n"
+            "║   Credenciales inválidas          ║\n"
+            "╚═══════════════════════════════════╝\n"
+            "```\n\n"
+            "❌ *Usuario o contraseña incorrectos.*\n\n"
+            "Intenta nuevamente.",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="Markdown"
+        )
         return CHOOSING_PLAN
+
+async def premium_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Esta función ya no se usa pero la dejamos por compatibilidad"""
+    return CHOOSING_PLAN
 
 async def buy_premium(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
