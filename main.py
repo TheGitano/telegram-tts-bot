@@ -412,4 +412,56 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await free_documento(update, context)
     elif data == "premium_menu":
         await show_premium_menu(update, context)
-    elif data == "premium_
+    elif data == "premium_texto":
+        await premium_texto(update, context)
+    elif data == "premium_documento":
+        await premium_documento(update, context)
+    elif data == "premium_config":
+        keyboard = [[InlineKeyboardButton("🔙 Volver", callback_data="premium_menu")]]
+        await query.edit_message_text("⚙️ *CONFIGURACIÓN*\n\nPróximamente disponible:\n• Idioma de destino\n• Velocidad de voz\n• Formato de audio", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+    elif data == "premium_help":
+        keyboard = [[InlineKeyboardButton("🔙 Volver", callback_data="premium_menu")]]
+        await query.edit_message_text("❓ *AYUDA*\n\n*Cómo usar:*\n1️⃣ Selecciona una función\n2️⃣ Envía tu contenido\n3️⃣ Recibe el resultado\n\n*Soporte:*\n📧 corporatebusinessunitedstates@gmail.com", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+    elif data == "premium_logout":
+        uid = update.effective_user.id
+        if uid in active_sessions:
+            del active_sessions[uid]
+        await query.edit_message_text("✅ *Sesión cerrada correctamente.*\n\nHasta pronto!", parse_mode="Markdown")
+        await start(update, context)
+
+async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    logger.error(f"Error: {context.error}")
+    if update and update.effective_message:
+        await update.effective_message.reply_text("❌ Error inesperado. Usa /start para reiniciar.")
+
+def main():
+    if not TELEGRAM_BOT_TOKEN:
+        logger.error("❌ TOKEN NO CONFIGURADO")
+        return
+    
+    logger.info("🚀 Iniciando El Gitano Bot...")
+    app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
+    
+    conv_handler = ConversationHandler(
+        entry_points=[CommandHandler("start", start)],
+        states={
+            CHOOSING_PLAN: [CallbackQueryHandler(button_callback)],
+            PREMIUM_USERNAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, premium_username)],
+            PREMIUM_PASSWORD: [MessageHandler(filters.TEXT & ~filters.COMMAND, premium_password)],
+            PREMIUM_BUY_DATA: [MessageHandler(filters.TEXT & ~filters.COMMAND, premium_buy_data)],
+        },
+        fallbacks=[CommandHandler("start", start)],
+        allow_reentry=True
+    )
+    
+    app.add_handler(conv_handler)
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+    app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
+    app.add_error_handler(error_handler)
+    
+    logger.info("✅ Bot iniciado correctamente")
+    logger.info("🦅 El Gitano Bot está listo")
+    app.run_polling(allowed_updates=Update.ALL_TYPES)
+
+if __name__ == "__main__":
+    main()
