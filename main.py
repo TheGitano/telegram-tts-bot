@@ -205,36 +205,33 @@ async def premium_login(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "║                                   ║\n"
         "╚═══════════════════════════════════╝\n"
         "```\n\n"
-        "Envía tus credenciales en este formato:\n\n"
-        "```\n"
-        "User: tu_usuario\n"
-        "Password: tu_contraseña\n"
-        "```",
+        "Por favor, ingresa tu *USUARIO*:",
         parse_mode="Markdown"
     )
     return PREMIUM_USERNAME
 
 async def premium_username(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Procesa las credenciales enviadas juntas"""
+    """Recibe el usuario y pide la contraseña"""
+    context.user_data["premium_username_attempt"] = update.message.text.strip()
+    await update.message.reply_text(
+        "```\n"
+        "╔═══════════════════════════════════╗\n"
+        "║          🔑 CONTRASEÑA 🔑         ║\n"
+        "╚═══════════════════════════════════╝\n"
+        "```\n\n"
+        "Ahora ingresa tu *CONTRASEÑA*:",
+        parse_mode="Markdown"
+    )
+    return PREMIUM_PASSWORD
+
+async def premium_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Valida las credenciales"""
     uid = update.effective_user.id
-    credentials = update.message.text.strip()
-    
-    # Intentar extraer usuario y contraseña del texto
-    lines = credentials.split('\n')
-    username = None
-    password = None
-    
-    for line in lines:
-        line = line.strip()
-        # Buscar usuario
-        if 'user:' in line.lower() or 'usuario:' in line.lower():
-            username = line.split(':', 1)[1].strip()
-        # Buscar contraseña
-        elif 'password:' in line.lower() or 'contraseña:' in line.lower() or 'pass:' in line.lower():
-            password = line.split(':', 1)[1].strip()
+    username = context.user_data.get("premium_username_attempt", "")
+    password = update.message.text.strip()
     
     # Validar credenciales
-    if username and password and username in PREMIUM_USERS and PREMIUM_USERS[username]["password"] == password:
+    if username in PREMIUM_USERS and PREMIUM_USERS[username]["password"] == password:
         if datetime.now() > PREMIUM_USERS[username]["expires"]:
             await update.message.reply_text(
                 "```\n"
@@ -289,10 +286,6 @@ async def premium_username(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="Markdown"
         )
         return CHOOSING_PLAN
-
-async def premium_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Esta función ya no se usa pero la dejamos por compatibilidad"""
-    return CHOOSING_PLAN
 
 async def buy_premium(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
