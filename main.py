@@ -195,26 +195,21 @@ async def premium_login(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     await query.edit_message_text(
-        "━━━━━━━━━━━━━━━━━━━━━━\n"
-        "🔐 *INICIO DE SESIÓN PREMIUM* 🔐\n"
-        "━━━━━━━━━━━━━━━━━━━━━━\n\n"
         "```\n"
         "╔═══════════════════════════════════╗\n"
+        "║                                   ║\n"
+        "║         🔐 INGRESAR 🔐            ║\n"
+        "║                                   ║\n"
         "║   SISTEMA DE AUTENTICACIÓN v2.0   ║\n"
-        "║         [ACCESO RESTRINGIDO]      ║\n"
+        "║        [ACCESO RESTRINGIDO]       ║\n"
+        "║                                   ║\n"
         "╚═══════════════════════════════════╝\n"
         "```\n\n"
-        "Por favor, envía tus credenciales en el siguiente formato:\n\n"
-        "*Usuario:*\n"
-        "*Contraseña:*\n\n"
-        "━━━━━━━━━━━━━━━━━━━━━━\n"
-        "*Ejemplo:*\n"
+        "Envía tus credenciales en este formato:\n\n"
         "```\n"
-        "Usuario: Gitano\n"
-        "Contraseña: 8376\n"
-        "```\n"
-        "━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        "🔒 Envía ambos datos en un solo mensaje:",
+        "User: tu_usuario\n"
+        "Password: tu_contraseña\n"
+        "```",
         parse_mode="Markdown"
     )
     return PREMIUM_USERNAME
@@ -231,15 +226,26 @@ async def premium_username(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     for line in lines:
         line = line.strip()
-        if 'usuario:' in line.lower():
+        # Buscar usuario
+        if 'user:' in line.lower() or 'usuario:' in line.lower():
             username = line.split(':', 1)[1].strip()
-        elif 'contraseña:' in line.lower() or 'password:' in line.lower():
+        # Buscar contraseña
+        elif 'password:' in line.lower() or 'contraseña:' in line.lower() or 'pass:' in line.lower():
             password = line.split(':', 1)[1].strip()
     
     # Validar credenciales
     if username and password and username in PREMIUM_USERS and PREMIUM_USERS[username]["password"] == password:
         if datetime.now() > PREMIUM_USERS[username]["expires"]:
-            await update.message.reply_text("❌ *Tu licencia Premium ha expirado.*\n\nPor favor, renueva tu suscripción.", parse_mode="Markdown")
+            await update.message.reply_text(
+                "```\n"
+                "╔═══════════════════════════════════╗\n"
+                "║      ⚠️ LICENCIA EXPIRADA ⚠️      ║\n"
+                "╚═══════════════════════════════════╝\n"
+                "```\n\n"
+                "❌ *Tu licencia Premium ha expirado.*\n\n"
+                "Por favor, renueva tu suscripción.",
+                parse_mode="Markdown"
+            )
             return await start(update, context)
         
         # Login exitoso
@@ -250,16 +256,18 @@ async def premium_username(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             "```\n"
             "╔═══════════════════════════════════╗\n"
-            "║      ACCESO AUTORIZADO ✓          ║\n"
+            "║      ✅ ACCESO AUTORIZADO ✅      ║\n"
+            "║                                   ║\n"
             "║   Verificando credenciales...     ║\n"
             "║   [████████████████████] 100%     ║\n"
+            "║                                   ║\n"
             "╚═══════════════════════════════════╝\n"
             "```\n\n"
             f"━━━━━━━━━━━━━━━━━━━━━━\n"
             f"🎉 *¡BIENVENIDO {username.upper()}!* 🎉\n"
             f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
             f"✅ Inicio de sesión exitoso\n"
-            f"⏰ Te quedan *{days_left} días* de tu licencia Premium\n\n"
+            f"⏰ Te quedan *{days_left} días* de licencia\n\n"
             f"━━━━━━━━━━━━━━━━━━━━━━",
             parse_mode="Markdown"
         )
@@ -269,8 +277,10 @@ async def premium_username(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             "```\n"
             "╔═══════════════════════════════════╗\n"
-            "║      ACCESO DENEGADO ✗            ║\n"
-            "║   Credenciales inválidas          ║\n"
+            "║       ❌ ACCESO DENEGADO ❌       ║\n"
+            "║                                   ║\n"
+            "║    Credenciales inválidas         ║\n"
+            "║                                   ║\n"
             "╚═══════════════════════════════════╝\n"
             "```\n\n"
             "❌ *Usuario o contraseña incorrectos.*\n\n"
