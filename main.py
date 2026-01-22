@@ -502,8 +502,11 @@ async def premium_audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
+    
+    # Si no está esperando texto, ignorar
     if not context.user_data.get("waiting_text", False):
         return
+    
     try:
         processing_msg = await update.message.reply_text("⏳ Procesando...")
         text = update.message.text
@@ -704,14 +707,22 @@ def main():
         states={
             CHOOSING_PLAN: [
                 CallbackQueryHandler(button_callback),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text),
+                MessageHandler(filters.VOICE, handle_voice),
                 MessageHandler(filters.Document.ALL, handle_document),
-                MessageHandler(filters.VOICE, handle_voice)
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text)
             ],
-            PREMIUM_USERNAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, premium_username)],
-            PREMIUM_PASSWORD: [MessageHandler(filters.TEXT & ~filters.COMMAND, premium_password)],
-            PREMIUM_BUY_DATA: [MessageHandler(filters.TEXT & ~filters.COMMAND, premium_buy_data)],
-            FORGOT_PASSWORD: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_forgot_password)],
+            PREMIUM_USERNAME: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, premium_username)
+            ],
+            PREMIUM_PASSWORD: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, premium_password)
+            ],
+            PREMIUM_BUY_DATA: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, premium_buy_data)
+            ],
+            FORGOT_PASSWORD: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, process_forgot_password)
+            ],
         },
         fallbacks=[CommandHandler("start", start)],
         allow_reentry=True
