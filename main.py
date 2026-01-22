@@ -702,21 +702,22 @@ def main():
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler("start", start)],
         states={
-            CHOOSING_PLAN: [CallbackQueryHandler(button_callback)],
+            CHOOSING_PLAN: [
+                CallbackQueryHandler(button_callback),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text),
+                MessageHandler(filters.Document.ALL, handle_document),
+                MessageHandler(filters.VOICE, handle_voice)
+            ],
             PREMIUM_USERNAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, premium_username)],
             PREMIUM_PASSWORD: [MessageHandler(filters.TEXT & ~filters.COMMAND, premium_password)],
             PREMIUM_BUY_DATA: [MessageHandler(filters.TEXT & ~filters.COMMAND, premium_buy_data)],
             FORGOT_PASSWORD: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_forgot_password)],
         },
         fallbacks=[CommandHandler("start", start)],
-        allow_reentry=True,
-        per_message=False
+        allow_reentry=True
     )
     
     app.add_handler(conv_handler)
-    app.add_handler(MessageHandler(filters.VOICE, handle_voice))
-    app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     app.add_error_handler(error_handler)
     
     logger.info("✅ Bot iniciado correctamente")
