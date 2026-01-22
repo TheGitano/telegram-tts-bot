@@ -263,7 +263,24 @@ async def premium_login(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return PREMIUM_USERNAME
 
 async def premium_username(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data["premium_username_attempt"] = update.message.text.strip()
+    username = update.message.text.strip()
+    context.user_data["premium_username_attempt"] = username
+    
+    # Verificar si el usuario existe
+    if username not in PREMIUM_USERS:
+        keyboard = [[InlineKeyboardButton("🔙 Volver", callback_data="plan_premium")]]
+        await update.message.reply_text(
+            "```\n"
+            "╔═══════════════════════════════════╗\n"
+            "║       ❌ USUARIO NO EXISTE ❌    ║\n"
+            "╚═══════════════════════════════════╝\n"
+            "```\n\n"
+            f"❌ El usuario '{username}' no está registrado.\n\nIntenta nuevamente.",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="Markdown"
+        )
+        return CHOOSING_PLAN
+    
     await update.message.reply_text(
         "```\n"
         "╔═══════════════════════════════════╗\n"
@@ -272,7 +289,9 @@ async def premium_username(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "║   [●●●●●●●●●●●●●●●●●●●●]         ║\n"
         "║                                   ║\n"
         "╚═══════════════════════════════════╝\n"
-        "```\n\nAhora ingresa tu *CONTRASEÑA*:",
+        "```\n\n"
+        f"✅ Usuario: *{username}*\n\n"
+        "Ahora ingresa tu *CONTRASEÑA*:",
         parse_mode="Markdown"
     )
     return PREMIUM_PASSWORD
