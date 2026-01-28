@@ -80,8 +80,10 @@ def detect_language(text):
     try:
         from langdetect import detect
         lang = detect(text)
+        logger.info(f"Idioma detectado: {lang}")
         return lang
-    except:
+    except Exception as e:
+        logger.error(f"Error detectando idioma: {e}")
         return "unknown"
 
 def tts(text, lang="es"):
@@ -359,7 +361,7 @@ async def free_texto(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["waiting_text"] = True
     context.user_data["is_premium"] = False
     keyboard = [[InlineKeyboardButton("🔙 Cancelar", callback_data="plan_free")]]
-    await query.edit_message_text("📝 *TEXTO A VOZ*\n\n🔄 ES → EN (audio) o EN → ES (audio)\n\nEnvía tu texto:", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+    await query.edit_message_text("📝 *TEXTO A VOZ*\n\n🔄 ES → EN o EN → ES\n\nEnvía tu texto:", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
     return CHOOSING_PLAN
 
 async def premium_texto(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -368,7 +370,7 @@ async def premium_texto(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["waiting_text"] = True
     context.user_data["is_premium"] = True
     keyboard = [[InlineKeyboardButton("🔙 Volver", callback_data="premium_menu")]]
-    await query.edit_message_text("📝 *TEXTO A VOZ*\n\n🔄 ES → EN (audio) o EN → ES (audio)\n\nEnvía tu texto:", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+    await query.edit_message_text("📝 *TEXTO A VOZ*\n\n🔄 ES → EN o EN → ES\n\nEnvía tu texto:", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
     return CHOOSING_PLAN
 
 async def free_documento(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -462,6 +464,8 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             translated = translate_text(text, source="en", target="es")
             audio_lang = "es"
             lang_display = "🇺🇸→🇪🇸"
+        
+        logger.info(f"Texto original idioma: {lang}, Audio generado en: {audio_lang}")
         
         await update.message.reply_text(f"{lang_display} *Traducción:*\n\n{translated}", parse_mode="Markdown")
         
