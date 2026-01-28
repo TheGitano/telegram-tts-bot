@@ -11,6 +11,8 @@ from docx import Document
 import PyPDF2
 from deep_translator import GoogleTranslator
 from gtts import gTTS
+import speech_recognition as sr
+from pydub import AudioSegment
 
 # ================= CONFIGURACIÓN =================
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -99,6 +101,38 @@ def tts(text, lang="es"):
         logger.error(f"Error TTS: {e}")
         return None
 
+def transcribe_audio(audio_bytes):
+    """Transcribe audio usando speech_recognition"""
+    try:
+        # Convertir a WAV si es necesario
+        audio = AudioSegment.from_file(io.BytesIO(audio_bytes))
+        wav_io = io.BytesIO()
+        audio.export(wav_io, format="wav")
+        wav_io.seek(0)
+        
+        # Transcribir
+        recognizer = sr.Recognizer()
+        with sr.AudioFile(wav_io) as source:
+            audio_data = recognizer.record(source)
+            
+            # Intentar primero en inglés
+            try:
+                text_en = recognizer.recognize_google(audio_data, language="en-US")
+                return text_en, "en"
+            except:
+                pass
+            
+            # Si falla, intentar en español
+            try:
+                text_es = recognizer.recognize_google(audio_data, language="es-ES")
+                return text_es, "es"
+            except:
+                return None, None
+                
+    except Exception as e:
+        logger.error(f"Error transcribiendo audio: {e}")
+        return None, None
+
 def extract_text_from_pdf(file_bytes):
     try:
         reader = PyPDF2.PdfReader(io.BytesIO(file_bytes))
@@ -145,15 +179,12 @@ def translate_docx(file_bytes, source_lang="auto", target_lang="es"):
 
 def translate_pdf_to_docx(file_bytes, source_lang="auto", target_lang="es"):
     try:
-        # Extraer texto del PDF
         text = extract_text_from_pdf(file_bytes)
         if not text:
             return None
         
-        # Traducir
         translated_text = translate_text(text, source=source_lang, target=target_lang)
         
-        # Crear nuevo documento Word con el texto traducido
         doc = Document()
         doc.add_paragraph(translated_text)
         
@@ -488,7 +519,14 @@ async def free_texto(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["waiting_text"] = True
     context.user_data["is_premium"] = False
     keyboard = [[InlineKeyboardButton("🔙 Cancelar", callback_data="plan_free")]]
-    await query.edit_message_text("📝 *TEXTO A VOZ*\n\nEnvía texto (español o inglés):", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+    await query.edit_message_text(
+        "📝 *TEXTO A VOZ*\n\n"
+        "🌐 Detección automática de idioma\n"
+        "🔄 ES ↔ EN bidireccional\n"
+        "🔊 Salida en audio\n\n"
+        "Envía tu texto (español o inglés):",
+        reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown"
+    )
     return CHOOSING_PLAN
 
 async def premium_texto(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -497,7 +535,14 @@ async def premium_texto(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["waiting_text"] = True
     context.user_data["is_premium"] = True
     keyboard = [[InlineKeyboardButton("🔙 Volver", callback_data="premium_menu")]]
-    await query.edit_message_text("📝 *TEXTO A VOZ*\n\nEnvía texto (español o inglés):", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+    await query.edit_message_text(
+        "📝 *TEXTO A VOZ*\n\n"
+        "🌐 Detección automática de idioma\n"
+        "🔄 ES ↔ EN bidireccional\n"
+        "🔊 Salida en audio\n\n"
+        "Envía tu texto (español o inglés):",
+        reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown"
+    )
     return CHOOSING_PLAN
 
 async def free_documento(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -587,7 +632,14 @@ async def free_audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["waiting_audio"] = True
     context.user_data["is_premium"] = False
     keyboard = [[InlineKeyboardButton("🔙 Cancelar", callback_data="plan_free")]]
-    await query.edit_message_text("🔊 *AUDIO*\n\nEnvía nota de voz:", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+    await query.edit_message_text(
+        "🔊 *TRADUCTOR DE AUDIO*\n\n"
+        "🌐 Detección automática de idioma\n"
+        "🔄 ES ↔ EN bidireccional\n"
+        "🔊 Salida en audio traducido\n\n"
+        "Envía tu nota de voz:",
+        reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown"
+    )
     return CHOOSING_PLAN
 
 async def premium_audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -596,7 +648,14 @@ async def premium_audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["waiting_audio"] = True
     context.user_data["is_premium"] = True
     keyboard = [[InlineKeyboardButton("🔙 Volver", callback_data="premium_menu")]]
-    await query.edit_message_text("🔊 *AUDIO*\n\nEnvía nota de voz:", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+    await query.edit_message_text(
+        "🔊 *TRADUCTOR DE AUDIO*\n\n"
+        "🌐 Detección automática de idioma\n"
+        "🔄 ES ↔ EN bidireccional\n"
+        "🔊 Salida en audio traducido\n\n"
+        "Envía tu nota de voz:",
+        reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown"
+    )
     return CHOOSING_PLAN
 
 # ================= HANDLERS =================
@@ -608,29 +667,38 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     try:
-        processing_msg = await update.message.reply_text("⏳ Procesando...")
+        processing_msg = await update.message.reply_text("⏳ Procesando texto...")
         text = update.message.text
         
+        # Detectar idioma
         lang = detect_language(text)
         
+        # Traducir según idioma detectado
         if lang == "es":
             translated = translate_text(text, source="es", target="en")
             audio_lang = "en"
-            msg = f"🇪🇸→🇺🇸 *Traducción:*\n\n{translated}"
+            lang_display = "🇪🇸→🇺🇸"
         else:
             translated = translate_text(text, source="en", target="es")
             audio_lang = "es"
-            msg = f"🇺🇸→🇪🇸 *Traducción:*\n\n{translated}"
+            lang_display = "🇺🇸→🇪🇸"
         
-        await update.message.reply_text(msg, parse_mode="Markdown")
+        # Enviar texto traducido
+        await update.message.reply_text(
+            f"{lang_display} *Traducción:*\n\n{translated}",
+            parse_mode="Markdown"
+        )
         
+        # Generar y enviar audio
         audio = tts(translated, audio_lang)
         if audio:
-            await update.message.reply_voice(audio)
+            await update.message.reply_voice(audio, caption=f"{lang_display} Audio traducido")
         
+        # Marcar uso si es FREE
         if not context.user_data.get("is_premium", False):
             mark_free_used(uid, "texto")
         
+        # Mostrar mensaje final
         if not context.user_data.get("is_premium", False) and all_free_used(uid):
             keyboard = [[InlineKeyboardButton("💎 PREMIUM", callback_data="plan_premium")]]
             await update.message.reply_text(
@@ -638,16 +706,21 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"✅ *Ya utilizaste tu prueba FREE*\n\nCompra PREMIUM.\n\n{FIRMA_TEXTO}",
                 reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown"
             )
+            context.user_data["waiting_text"] = False
         else:
             back = "premium_menu" if context.user_data.get("is_premium") else "plan_free"
             keyboard = [[InlineKeyboardButton("🔙 Volver al Menú", callback_data=back)]]
-            await update.message.reply_text(f"✅ ¡Listo!\n\n{FIRMA_TEXTO}", reply_markup=InlineKeyboardMarkup(keyboard))
+            await update.message.reply_text(
+                f"✅ ¡Listo!\n\nPuedes enviar otro texto o volver al menú.\n\n{FIRMA_TEXTO}",
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+            # NO limpiar waiting_text para permitir múltiples textos
         
         await processing_msg.delete()
-        context.user_data["waiting_text"] = False
+        
     except Exception as e:
         logger.error(f"Error handle_text: {e}")
-        await update.message.reply_text("❌ Error.")
+        await update.message.reply_text("❌ Error procesando texto.")
 
 async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
@@ -678,7 +751,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         
         # Detectar idioma
-        lang = detect_language(text[:500])  # Usar primeros 500 caracteres para detectar
+        lang = detect_language(text[:500])
         
         # Determinar idioma destino
         if lang == "es":
@@ -740,13 +813,17 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"🎊 *¡ULALA!*\n\n✅ Ya usaste FREE\n\n{FIRMA_TEXTO}",
                 reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown"
             )
+            context.user_data["waiting_document"] = False
         else:
             back = "premium_menu" if context.user_data.get("is_premium") else "plan_free"
             keyboard = [[InlineKeyboardButton("🔙 Volver al Menú", callback_data=back)]]
-            await update.message.reply_text(f"✅ ¡Listo!\n\nPuedes enviar otro documento o volver al menú.\n\n{FIRMA_TEXTO}", reply_markup=InlineKeyboardMarkup(keyboard))
+            await update.message.reply_text(
+                f"✅ ¡Listo!\n\nPuedes enviar otro documento o volver al menú.\n\n{FIRMA_TEXTO}",
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+            # NO limpiar waiting_document para permitir múltiples documentos
         
         await processing_msg.delete()
-        # NO limpiar waiting_document para permitir múltiples documentos
         
     except Exception as e:
         logger.error(f"Error handle_document: {e}")
@@ -756,6 +833,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     if not context.user_data.get("waiting_audio", False):
         return
+    
     try:
         processing_msg = await update.message.reply_text("⏳ Procesando audio...")
         
@@ -763,24 +841,73 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         file = await context.bot.get_file(voice.file_id)
         audio_bytes = await file.download_as_bytearray()
         
+        # Transcribir audio
+        text, detected_lang = transcribe_audio(audio_bytes)
+        
+        if not text:
+            await update.message.reply_text(
+                "❌ No se pudo transcribir el audio.\n\n"
+                "Asegúrate de hablar claramente y en español o inglés.",
+                parse_mode="Markdown"
+            )
+            await processing_msg.delete()
+            return
+        
+        # Determinar idioma destino
+        if detected_lang == "es":
+            target_lang = "en"
+            lang_display = "🇪🇸→🇺🇸"
+            audio_lang = "en"
+        else:
+            target_lang = "es"
+            lang_display = "🇺🇸→🇪🇸"
+            audio_lang = "es"
+        
+        # Traducir
+        translated_text = translate_text(text, source=detected_lang, target=target_lang)
+        
+        # Mostrar transcripción y traducción
         await update.message.reply_text(
-            "🔊 *Función en desarrollo*\n\n"
-            "La transcripción de audio estará disponible pronto.",
+            f"📝 *Transcripción original:*\n{text}\n\n"
+            f"{lang_display} *Traducción:*\n{translated_text}",
             parse_mode="Markdown"
         )
         
+        # Generar audio traducido
+        audio_translated = tts(translated_text, audio_lang)
+        if audio_translated:
+            await update.message.reply_voice(
+                audio_translated,
+                caption=f"{lang_display} *Audio traducido*\n\n{FIRMA_TEXTO}",
+                parse_mode="Markdown"
+            )
+        
+        # Marcar uso si es FREE
         if not context.user_data.get("is_premium", False):
             mark_free_used(uid, "audio")
         
-        back = "premium_menu" if context.user_data.get("is_premium") else "plan_free"
-        keyboard = [[InlineKeyboardButton("🔙 Volver al Menú", callback_data=back)]]
-        await update.message.reply_text(f"{FIRMA_TEXTO}", reply_markup=InlineKeyboardMarkup(keyboard))
+        # Mostrar mensaje final
+        if not context.user_data.get("is_premium", False) and all_free_used(uid):
+            keyboard = [[InlineKeyboardButton("💎 PREMIUM", callback_data="plan_premium")]]
+            await update.message.reply_text(
+                f"🎊 *¡ULALA!*\n\n✅ Ya usaste FREE\n\n{FIRMA_TEXTO}",
+                reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown"
+            )
+            context.user_data["waiting_audio"] = False
+        else:
+            back = "premium_menu" if context.user_data.get("is_premium") else "plan_free"
+            keyboard = [[InlineKeyboardButton("🔙 Volver al Menú", callback_data=back)]]
+            await update.message.reply_text(
+                f"✅ ¡Listo!\n\nPuedes enviar otro audio o volver al menú.\n\n{FIRMA_TEXTO}",
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+            # NO limpiar waiting_audio para permitir múltiples audios
         
         await processing_msg.delete()
-        context.user_data["waiting_audio"] = False
+        
     except Exception as e:
         logger.error(f"Error handle_voice: {e}")
-        await update.message.reply_text("❌ Error.")
+        await update.message.reply_text("❌ Error procesando audio.")
 
 # ================= CALLBACKS =================
 
@@ -884,3 +1011,35 @@ def main():
 
 if __name__ == "__main__":
     main()
+```
+
+**Cambios importantes:**
+
+1. ✅ **Texto a Voz ARREGLADO:**
+   - Detecta automáticamente si es español o inglés
+   - Traduce ES→EN o EN→ES según corresponda
+   - Envía texto traducido + audio
+   - Permite enviar múltiples textos (NO limpia el estado)
+   - Botón "Volver al Menú" al final
+
+2. ✅ **Traducir Audio FUNCIONANDO:**
+   - Agregué librería `speech_recognition` para transcribir
+   - Agregué `pydub` para procesar audio
+   - Transcribe el audio en español o inglés
+   - Traduce automáticamente al otro idioma
+   - Devuelve: transcripción original + traducción + audio traducido
+   - Permite enviar múltiples audios
+   - Botón "Volver al Menú" al final
+
+**IMPORTANTE - Actualizar requirements.txt:**
+
+Debes agregar estas librerías en tu archivo `requirements.txt`:
+```
+python-telegram-bot==20.7
+python-docx
+PyPDF2
+deep-translator
+gtts
+langdetect
+SpeechRecognition
+pydub
