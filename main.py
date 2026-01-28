@@ -11,6 +11,8 @@ from docx import Document
 import PyPDF2
 from deep_translator import GoogleTranslator
 from gtts import gTTS
+import speech_recognition as sr
+from pydub import AudioSegment
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 ADMIN_EMAIL = "corporatebusinessunitedstates@gmail.com"
@@ -80,7 +82,7 @@ def detect_language(text):
     try:
         from langdetect import detect
         lang = detect(text)
-        logger.info(f"Idioma detectado: {lang}")
+        logger.info(f"🔍 Idioma detectado: {lang} para texto: {text[:50]}...")
         return lang
     except Exception as e:
         logger.error(f"Error detectando idioma: {e}")
@@ -91,12 +93,44 @@ def tts(text, lang="es"):
         audio = io.BytesIO()
         if len(text) > 5000:
             text = text[:5000] + "..."
+        logger.info(f"🔊 Generando TTS en idioma: {lang}")
         gTTS(text=text, lang=lang, slow=False).write_to_fp(audio)
         audio.seek(0)
         return audio
     except Exception as e:
         logger.error(f"Error TTS: {e}")
         return None
+
+def transcribe_audio(audio_bytes):
+    try:
+        logger.info("🎤 Iniciando transcripción de audio...")
+        audio = AudioSegment.from_file(io.BytesIO(audio_bytes))
+        wav_io = io.BytesIO()
+        audio.export(wav_io, format="wav")
+        wav_io.seek(0)
+        
+        recognizer = sr.Recognizer()
+        with sr.AudioFile(wav_io) as source:
+            audio_data = recognizer.record(source)
+            
+            try:
+                text_en = recognizer.recognize_google(audio_data, language="en-US")
+                logger.info(f"✅ Transcrito en inglés: {text_en}")
+                return text_en, "en"
+            except:
+                logger.info("❌ No se pudo transcribir en inglés, intentando español...")
+            
+            try:
+                text_es = recognizer.recognize_google(audio_data, language="es-ES")
+                logger.info(f"✅ Transcrito en español: {text_es}")
+                return text_es, "es"
+            except:
+                logger.error("❌ No se pudo transcribir en ningún idioma")
+                return None, None
+                
+    except Exception as e:
+        logger.error(f"Error transcribiendo audio: {e}")
+        return None, None
 
 def extract_text_from_pdf(file_bytes):
     try:
@@ -454,18 +488,20 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         processing_msg = await update.message.reply_text("⏳ Procesando...")
         text = update.message.text
-        lang = detect_language(text)
         
-        if lang == "es":
+        lang = detect_language(text)
+        logger.info(f"📊 TEXTO A VOZ - Idioma detectado: {lang}")
+        
+        if lang == "es" or lang.startswith("es"):
             translated = translate_text(text, source="es", target="en")
             audio_lang = "en"
             lang_display = "🇪🇸→🇺🇸"
+            logger.info("✅ Español detectado → Audio en INGLÉS")
         else:
             translated = translate_text(text, source="en", target="es")
             audio_lang = "es"
             lang_display = "🇺🇸→🇪🇸"
-        
-        logger.info(f"Texto original idioma: {lang}, Audio generado en: {audio_lang}")
+            logger.info("✅ Inglés detectado → Audio en ESPAÑOL")
         
         await update.message.reply_text(f"{lang_display} *Traducción:*\n\n{translated}", parse_mode="Markdown")
         
@@ -487,7 +523,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         await processing_msg.delete()
     except Exception as e:
-        logger.error(f"Error texto: {e}")
+        logger.error(f"❌ Error texto: {e}")
         await update.message.reply_text("❌ Error.")
 
 async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -519,7 +555,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         lang = detect_language(text[:500])
         
-        if lang == "es":
+        if lang == "es" or lang.startswith("es"):
             target_lang = "en"
             lang_display = "🇪🇸→🇺🇸"
             audio_lang = "en"
@@ -569,7 +605,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         await processing_msg.delete()
     except Exception as e:
-        logger.error(f"Error documento: {e}")
+        logger.error(f"❌ Error documento: {e}")
         await update.message.reply_text("❌ Error procesando documento.")
 
 async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -578,17 +614,67 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     try:
-        await update.message.reply_text("🔊 *Función en desarrollo*\n\nLa transcripción de audio estará disponible pronto.", parse_mode="Markdown")
+        processing_msg = await update.message.reply_text("⏳ Transcribiendo audio...")
+        
+        voice = update.message.voice
+        file = await context.bot.get_file(voice.file_id)
+        audio_bytes = await file.download_as_bytearray()
+        
+        text, detected_lang = transcribe_audio(audio_bytes)
+        
+        if not text:
+            await update.message.reply_text(
+                "❌ No se pudo transcribir el audio.\n\n"
+                "Asegúrate de hablar claramente.",
+                parse_mode="Markdown"
+            )
+            await processing_msg.delete()
+            back = "premium_menu" if context.user_data.get("is_premium") else "plan_free"
+            keyboard = [[InlineKeyboardButton("🔙 Volver al Menú", callback_data=back)]]
+            await update.message.reply_text(FIRMA_TEXTO, reply_markup=InlineKeyboardMarkup(keyboard))
+            return
+        
+        if detected_lang == "es":
+            target_lang = "en"
+            lang_display = "🇪🇸→🇺🇸"
+            audio_lang = "en"
+        else:
+            target_lang = "es"
+            lang_display = "🇺🇸→🇪🇸"
+            audio_lang = "es"
+        
+        translated_text = translate_text(text, source=detected_lang, target=target_lang)
+        
+        await update.message.reply_text(
+            f"📝 *Transcripción:*\n{text}\n\n"
+            f"{lang_display} *Traducción:*\n{translated_text}",
+            parse_mode="Markdown"
+        )
+        
+        audio_translated = tts(translated_text, audio_lang)
+        if audio_translated:
+            await update.message.reply_voice(
+                audio_translated,
+                caption=f"{lang_display} Audio traducido\n\n{FIRMA_TEXTO}"
+            )
         
         if not context.user_data.get("is_premium", False):
             mark_free_used(uid, "audio")
         
-        back = "premium_menu" if context.user_data.get("is_premium") else "plan_free"
-        keyboard = [[InlineKeyboardButton("🔙 Volver al Menú", callback_data=back)]]
-        await update.message.reply_text(FIRMA_TEXTO, reply_markup=InlineKeyboardMarkup(keyboard))
-        context.user_data["waiting_audio"] = False
+        if not context.user_data.get("is_premium", False) and all_free_used(uid):
+            keyboard = [[InlineKeyboardButton("💎 PREMIUM", callback_data="plan_premium")]]
+            await update.message.reply_text(f"✅ Ya usaste FREE\n\n{FIRMA_TEXTO}", reply_markup=InlineKeyboardMarkup(keyboard))
+            context.user_data["waiting_audio"] = False
+        else:
+            back = "premium_menu" if context.user_data.get("is_premium") else "plan_free"
+            keyboard = [[InlineKeyboardButton("🔙 Volver al Menú", callback_data=back)]]
+            await update.message.reply_text(f"✅ Listo. Envía otro audio o vuelve.\n\n{FIRMA_TEXTO}", reply_markup=InlineKeyboardMarkup(keyboard))
+        
+        await processing_msg.delete()
+        
     except Exception as e:
-        logger.error(f"Error audio: {e}")
+        logger.error(f"❌ Error audio: {e}")
+        await update.message.reply_text("❌ Error procesando audio.")
 
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -674,3 +760,15 @@ def main():
 
 if __name__ == "__main__":
     main()
+```
+
+**También actualiza tu `requirements.txt`:**
+```
+python-telegram-bot==20.7
+python-docx
+PyPDF2
+deep-translator
+gtts
+langdetect
+SpeechRecognition
+pydub
