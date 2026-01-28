@@ -126,18 +126,24 @@ def translate_docx(file_bytes, source_lang="auto", target_lang="es"):
         doc = Document(io.BytesIO(file_bytes))
         for paragraph in doc.paragraphs:
             if paragraph.text.strip():
-                paragraph.text = translate_text(paragraph.text, source=source_lang, target=target_lang)
+                original_text = paragraph.text
+                translated = translate_text(original_text, source=source_lang, target=target_lang)
+                paragraph.text = translated
+        
         for table in doc.tables:
             for row in table.rows:
                 for cell in row.cells:
                     if cell.text.strip():
-                        cell.text = translate_text(cell.text, source=source_lang, target=target_lang)
+                        original_text = cell.text
+                        translated = translate_text(original_text, source=source_lang, target=target_lang)
+                        cell.text = translated
+        
         out_stream = io.BytesIO()
         doc.save(out_stream)
         out_stream.seek(0)
         return out_stream
     except Exception as e:
-        logger.error(f"Error DOCX: {e}")
+        logger.error(f"Error DOCX traducción: {e}")
         return None
 
 def translate_pdf_to_docx(file_bytes, source_lang="auto", target_lang="es"):
@@ -353,7 +359,7 @@ async def free_texto(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["waiting_text"] = True
     context.user_data["is_premium"] = False
     keyboard = [[InlineKeyboardButton("🔙 Cancelar", callback_data="plan_free")]]
-    await query.edit_message_text("📝 *TEXTO A VOZ*\n\n🔄 ES ↔ EN\n\nEnvía tu texto:", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+    await query.edit_message_text("📝 *TEXTO A VOZ*\n\n🔄 ES → EN (audio) o EN → ES (audio)\n\nEnvía tu texto:", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
     return CHOOSING_PLAN
 
 async def premium_texto(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -362,7 +368,7 @@ async def premium_texto(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["waiting_text"] = True
     context.user_data["is_premium"] = True
     keyboard = [[InlineKeyboardButton("🔙 Volver", callback_data="premium_menu")]]
-    await query.edit_message_text("📝 *TEXTO A VOZ*\n\n🔄 ES ↔ EN\n\nEnvía tu texto:", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+    await query.edit_message_text("📝 *TEXTO A VOZ*\n\n🔄 ES → EN (audio) o EN → ES (audio)\n\nEnvía tu texto:", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
     return CHOOSING_PLAN
 
 async def free_documento(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -461,7 +467,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         audio = tts(translated, audio_lang)
         if audio:
-            await update.message.reply_voice(audio, caption=f"{lang_display} Audio")
+            await update.message.reply_voice(audio, caption=f"{lang_display} Audio traducido")
         
         if not context.user_data.get("is_premium", False):
             mark_free_used(uid, "texto")
@@ -477,7 +483,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         await processing_msg.delete()
     except Exception as e:
-        logger.error(f"Error: {e}")
+        logger.error(f"Error texto: {e}")
         await update.message.reply_text("❌ Error.")
 
 async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -489,7 +495,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         doc = update.message.document
         document_mode = context.user_data.get("document_mode", "translate")
         
-        processing_msg = await update.message.reply_text(f"⏳ Procesando...")
+        processing_msg = await update.message.reply_text(f"⏳ Procesando documento...")
         file = await context.bot.get_file(doc.file_id)
         data = await file.download_as_bytearray()
         
@@ -527,10 +533,10 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 translated_file = translate_pdf_to_docx(data, source_lang=lang, target_lang=target_lang)
             
             if translated_file:
-                filename = f"traducido_{doc.file_name.replace('.pdf', '.docx')}"
-                await update.message.reply_document(document=translated_file, filename=filename, caption=f"{lang_display}\n\n{FIRMA_TEXTO}")
+                filename = f"traducido_{lang_display.replace('🇪🇸', 'ES').replace('🇺🇸', 'EN').replace('→', '_')}_{doc.file_name.replace('.pdf', '.docx')}"
+                await update.message.reply_document(document=translated_file, filename=filename, caption=f"{lang_display} Documento traducido\n\n{FIRMA_TEXTO}")
             else:
-                await update.message.reply_text("❌ Error.")
+                await update.message.reply_text("❌ Error al traducir.")
                 await processing_msg.delete()
                 return
             
@@ -539,9 +545,9 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             audio = tts(translated_text, audio_lang)
             if audio:
-                await update.message.reply_voice(audio, caption=f"{lang_display}\n\n{FIRMA_TEXTO}")
+                await update.message.reply_voice(audio, caption=f"{lang_display} Documento a voz\n\n{FIRMA_TEXTO}")
             else:
-                await update.message.reply_text("❌ Error audio.")
+                await update.message.reply_text("❌ Error al generar audio.")
                 await processing_msg.delete()
                 return
             
@@ -555,12 +561,12 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             back = "premium_menu" if context.user_data.get("is_premium") else "plan_free"
             keyboard = [[InlineKeyboardButton("🔙 Volver al Menú", callback_data=back)]]
-            await update.message.reply_text(f"✅ Listo. Envía otro o vuelve.\n\n{FIRMA_TEXTO}", reply_markup=InlineKeyboardMarkup(keyboard))
+            await update.message.reply_text(f"✅ Listo. Envía otro documento o vuelve.\n\n{FIRMA_TEXTO}", reply_markup=InlineKeyboardMarkup(keyboard))
         
         await processing_msg.delete()
     except Exception as e:
-        logger.error(f"Error: {e}")
-        await update.message.reply_text("❌ Error.")
+        logger.error(f"Error documento: {e}")
+        await update.message.reply_text("❌ Error procesando documento.")
 
 async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
@@ -576,8 +582,9 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         back = "premium_menu" if context.user_data.get("is_premium") else "plan_free"
         keyboard = [[InlineKeyboardButton("🔙 Volver al Menú", callback_data=back)]]
         await update.message.reply_text(FIRMA_TEXTO, reply_markup=InlineKeyboardMarkup(keyboard))
+        context.user_data["waiting_audio"] = False
     except Exception as e:
-        logger.error(f"Error: {e}")
+        logger.error(f"Error audio: {e}")
 
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
