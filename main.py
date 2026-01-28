@@ -760,15 +760,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-```
-
-**También actualiza tu `requirements.txt`:**
-```
-python-telegram-bot==20.7
-python-docx
-PyPDF2
-deep-translator
-gtts
-langdetect
-SpeechRecognition
-pydub
