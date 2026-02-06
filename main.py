@@ -9,14 +9,23 @@ from telegram.ext import (
 )
 from docx import Document
 import PyPDF2
+from PyPDF2 import PdfWriter, PdfReader
 from deep_translator import GoogleTranslator
 from gtts import gTTS
 import speech_recognition as sr
 from pydub import AudioSegment
+from reportlab.pdfgen import canvas
+from reportlab.lib.pagesizes import letter
+from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
+from reportlab.lib.units import inch
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 ADMIN_EMAIL = "corporatebusinessunitedstates@gmail.com"
 FIRMA_TEXTO = "🦅 𝓣𝓱𝓮𝓖𝓲𝓽𝓪𝓷𝓸 🦅"
+
+# Ruta de la imagen del bot (debe estar en el mismo directorio)
+BOT_IMAGE_PATH = "1770404886764_image.png"
 
 PREMIUM_USERS = {
     "Gitano": {"password": "8376", "name": "El Gitano", "email": "admin@gitano.com", "expires": datetime(2099, 12, 31)}
@@ -158,6 +167,7 @@ def extract_text_from_docx(file_bytes):
         return ""
 
 def translate_docx(file_bytes, source_lang="auto", target_lang="es"):
+    """Traduce un documento DOCX manteniendo el formato"""
     try:
         doc = Document(io.BytesIO(file_bytes))
         for paragraph in doc.paragraphs:
@@ -182,332 +192,561 @@ def translate_docx(file_bytes, source_lang="auto", target_lang="es"):
         logger.error(f"Error DOCX traducción: {e}")
         return None
 
-def translate_pdf_to_docx(file_bytes, source_lang="auto", target_lang="es"):
+def translate_pdf(file_bytes, source_lang="auto", target_lang="es"):
+    """Traduce un PDF y lo devuelve como PDF"""
     try:
+        # Extraer texto del PDF
         text = extract_text_from_pdf(file_bytes)
         if not text:
             return None
+        
+        # Traducir el texto
         translated_text = translate_text(text, source=source_lang, target=target_lang)
-        doc = Document()
-        doc.add_paragraph(translated_text)
-        out_stream = io.BytesIO()
-        doc.save(out_stream)
-        out_stream.seek(0)
-        return out_stream
+        
+        # Crear un nuevo PDF con el texto traducido
+        output = io.BytesIO()
+        pdf_canvas = SimpleDocTemplate(output, pagesize=letter)
+        
+        # Estilos
+        styles = getSampleStyleSheet()
+        story = []
+        
+        # Dividir el texto en párrafos y agregarlos
+        for para in translated_text.split('\n'):
+            if para.strip():
+                p = Paragraph(para, styles['Normal'])
+                story.append(p)
+                story.append(Spacer(1, 0.2*inch))
+        
+        pdf_canvas.build(story)
+        output.seek(0)
+        return output
     except Exception as e:
-        logger.error(f"Error PDF to DOCX: {e}")
+        logger.error(f"Error traduciendo PDF: {e}")
         return None
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     context.user_data.clear()
-    if uid not in free_usage:
-        free_usage[uid] = {"texto": False, "documento": False, "audio": False, "doc_voz": False}
     
-    keyboard = [[InlineKeyboardButton("🆓 FREE", callback_data="plan_free"), InlineKeyboardButton("💎 PREMIUM", callback_data="plan_premium")]]
-    text = (
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "✨ 𝗕𝗜𝗘𝗡𝗩𝗘𝗡𝗜𝗗𝗢 ✨\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        "🎯 *BOT CREADO POR:*\n"
-        "🦅 *𝓣𝓱𝓮𝓖𝓲𝓽𝓪𝓷𝓸* 🦅\n\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "🌟 *FUNCIONALIDADES:* 🌟\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+    message = (
+        "✨ *BIENVENIDO* ✨\n\n"
+        f"🎨 BOT CREADO POR:\n🦅 𝓣𝓱𝓮𝓖𝓲𝓽𝓪𝓷𝓸 🦅\n\n"
+        "⭐ *FUNCIONALIDADES:* ⭐\n\n"
         "📝 Texto a Voz\n"
         "🌐 Traductor Bidireccional\n"
         "📄 Traducir Documentos\n"
-        "🎙️ Documentos a Voz\n"
-        "🔊 Traducir Audio\n\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "💡 *SELECCIONA TU PLAN:*\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        "📋 Documentos a Voz\n"
+        "🎤 Traducir Audio\n\n"
+        "💡 *SELECCIONA TU PLAN:* 💡\n\n"
         "🆓 *FREE:* 1 uso por función\n"
-        "💎 *PREMIUM:* Uso ilimitado\n\n"
-        "👇 *Elige una opción:* 👇"
+        "💎 *PREMIUM:* Uso ilimitado"
     )
     
-    if update.message:
-        await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
-    else:
-        await update.callback_query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+    keyboard = [
+        [InlineKeyboardButton("🆓 FREE", callback_data="plan_free")],
+        [InlineKeyboardButton("💎 PREMIUM", callback_data="plan_premium")]
+    ]
+    
+    await update.message.reply_text(message, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
     return CHOOSING_PLAN
 
 async def plan_free(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
     uid = update.effective_user.id
     
+    used_functions = []
+    if uid in free_usage:
+        if free_usage[uid].get("texto"):
+            used_functions.append("📝 Texto a Voz")
+        if free_usage[uid].get("documento"):
+            used_functions.append("📄 Traductor Documentos")
+        if free_usage[uid].get("doc_voz"):
+            used_functions.append("📋 Documentos a Voz")
+        if free_usage[uid].get("audio"):
+            used_functions.append("🎤 Traducir Audio")
+    
     if all_free_used(uid):
-        keyboard = [[InlineKeyboardButton("💎 COMPRAR PREMIUM", callback_data="plan_premium")]]
-        await query.edit_message_text(
-            "━━━━━━━━━━━━━━━━━━━━━━\n🎊 *¡ULALA!* 🎊\n━━━━━━━━━━━━━━━━━━━━━━\n\n"
-            "✅ *Ya utilizaste tu prueba FREE*\n\nCompra PREMIUM.\n\n"
-            "━━━━━━━━━━━━━━━━━━━━━━\n💎 *PREMIUM - $27 USD/30 días*\n━━━━━━━━━━━━━━━━━━━━━━",
-            reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown"
+        message = (
+            "❌ *Ya usaste todas las funciones FREE*\n\n"
+            "🎯 Funciones usadas:\n"
+            f"{''.join([f'• {f}' + chr(10) for f in used_functions])}\n"
+            "💎 *Actualiza a PREMIUM para uso ilimitado*\n\n"
+            f"{FIRMA_TEXTO}"
         )
+        keyboard = [
+            [InlineKeyboardButton("💎 PREMIUM", callback_data="plan_premium")],
+            [InlineKeyboardButton("🔙 Volver", callback_data="back_start")]
+        ]
+        await query.edit_message_text(message, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
         return CHOOSING_PLAN
     
-    texto_status = "✅" if not free_usage[uid]["texto"] else "❌"
-    doc_status = "✅" if not free_usage[uid]["documento"] else "❌"
-    doc_voz_status = "✅" if not free_usage[uid]["doc_voz"] else "❌"
-    audio_status = "✅" if not free_usage[uid]["audio"] else "❌"
+    message = "🆓 *PLAN FREE*\n\n📌 Elige una función:\n\n"
+    keyboard = []
     
-    keyboard = [
-        [InlineKeyboardButton(f"{texto_status} 📝 Texto a Voz", callback_data="free_texto")],
-        [InlineKeyboardButton(f"{doc_status} 📄 Traducir Documentos", callback_data="free_documento")],
-        [InlineKeyboardButton(f"{doc_voz_status} 🎙️ Documentos a Voz", callback_data="free_doc_voz")],
-        [InlineKeyboardButton(f"{audio_status} 🔊 Traducir Audio", callback_data="free_audio")],
-        [InlineKeyboardButton("💎 Actualizar a PREMIUM", callback_data="plan_premium")],
-        [InlineKeyboardButton("🔙 Volver", callback_data="back_start")]
-    ]
+    if can_use_free(uid, "texto"):
+        keyboard.append([InlineKeyboardButton("📝 Texto a Voz", callback_data="free_texto")])
+    else:
+        keyboard.append([InlineKeyboardButton("📝 Texto a Voz ❌ Usado", callback_data="used")])
     
-    text = (
-        "━━━━━━━━━━━━━━━━━━━━━━\n🆓 *MODO FREE* 🆓\n━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        "Tienes *1 uso* por función:\n\n"
-        f"{texto_status} *Texto a Voz*\n{doc_status} *Traducir Documentos*\n{doc_voz_status} *Documentos a Voz*\n{audio_status} *Traducir Audio*\n\n"
-        "━━━━━━━━━━━━━━━━━━━━━━\n👇 *Selecciona:* 👇\n━━━━━━━━━━━━━━━━━━━━━━"
-    )
+    if can_use_free(uid, "documento"):
+        keyboard.append([InlineKeyboardButton("🌐 Traductor Documentos", callback_data="free_documento")])
+    else:
+        keyboard.append([InlineKeyboardButton("🌐 Traductor Documentos ❌ Usado", callback_data="used")])
     
-    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+    if can_use_free(uid, "doc_voz"):
+        keyboard.append([InlineKeyboardButton("📋 Documentos a Voz", callback_data="free_doc_voz")])
+    else:
+        keyboard.append([InlineKeyboardButton("📋 Documentos a Voz ❌ Usado", callback_data="used")])
+    
+    if can_use_free(uid, "audio"):
+        keyboard.append([InlineKeyboardButton("🎤 Traducir Audio", callback_data="free_audio")])
+    else:
+        keyboard.append([InlineKeyboardButton("🎤 Traducir Audio ❌ Usado", callback_data="used")])
+    
+    keyboard.append([InlineKeyboardButton("💎 PREMIUM", callback_data="plan_premium")])
+    keyboard.append([InlineKeyboardButton("🔙 Volver", callback_data="back_start")])
+    
+    await query.edit_message_text(message, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
     return CHOOSING_PLAN
 
 async def plan_premium(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
     uid = update.effective_user.id
     
     if is_premium_active(uid):
         return await show_premium_menu(update, context)
     
+    message = (
+        "💎 *PLAN PREMIUM*\n\n"
+        "✅ Uso ilimitado de todas las funciones\n\n"
+        "🎯 *FUNCIONES:*\n"
+        "📝 Texto a Voz\n"
+        "🌐 Traductor Bidireccional\n"
+        "📄 Traducir Documentos\n"
+        "📋 Documentos a Voz\n"
+        "🎤 Traducir Audio\n\n"
+        f"{FIRMA_TEXTO}"
+    )
+    
     keyboard = [
-        [InlineKeyboardButton("🔑 INGRESAR", callback_data="premium_login")],
-        [InlineKeyboardButton("💰 COMPRAR PREMIUM", callback_data="buy_premium")],
-        [InlineKeyboardButton("🔐 Olvidé mi Contraseña", callback_data="forgot_password")],
+        [InlineKeyboardButton("🔐 Iniciar Sesión", callback_data="premium_login")],
+        [InlineKeyboardButton("💳 Comprar Premium", callback_data="buy_premium")],
         [InlineKeyboardButton("🔙 Volver", callback_data="back_start")]
     ]
     
-    text = (
-        "━━━━━━━━━━━━━━━━━━━━━━\n💎 *PREMIUM* 💎\n━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        "✨ *BENEFICIOS:*\n"
-        "✅ Uso ilimitado\n✅ Traducción bidireccional\n✅ Sin restricciones\n\n"
-        "💵 *$27 USD / 30 días*\n━━━━━━━━━━━━━━━━━━━━━━"
-    )
-    
-    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
-    return CHOOSING_PLAN
-
-async def premium_login(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    context.user_data.clear()
-    await query.edit_message_text("🔐 *LOGIN PREMIUM*\n\nEnvía tu *USUARIO*:", parse_mode="Markdown")
-    return PREMIUM_USERNAME
-
-async def premium_username(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    username = update.message.text.strip()
-    context.user_data["premium_username_attempt"] = username
-    
-    if username not in PREMIUM_USERS:
-        keyboard = [[InlineKeyboardButton("🔙 Volver", callback_data="plan_premium")]]
-        await update.message.reply_text(
-            f"❌ Usuario '{username}' no existe.",
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
-        return CHOOSING_PLAN
-    
-    await update.message.reply_text(f"✅ Usuario: *{username}*\n\nAhora envía tu *CONTRASEÑA*:", parse_mode="Markdown")
-    return PREMIUM_PASSWORD
-
-async def premium_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    uid = update.effective_user.id
-    username = context.user_data.get("premium_username_attempt", "")
-    password = update.message.text.strip()
-    
-    if username in PREMIUM_USERS and PREMIUM_USERS[username]["password"] == password:
-        if datetime.now() > PREMIUM_USERS[username]["expires"]:
-            await update.message.reply_text("❌ Licencia expirada.")
-            return await start(update, context)
-        
-        active_sessions[uid] = username
-        days_left = max(0, (PREMIUM_USERS[username]["expires"] - datetime.now()).days)
-        await update.message.reply_text(f"✅ *¡BIENVENIDO {username.upper()}!*\n\n⏰ Licencia: *{days_left} días*", parse_mode="Markdown")
-        return await show_premium_menu(update, context)
-    else:
-        keyboard = [[InlineKeyboardButton("🔙 Volver", callback_data="plan_premium")]]
-        await update.message.reply_text("❌ Contraseña incorrecta.", reply_markup=InlineKeyboardMarkup(keyboard))
-        return CHOOSING_PLAN
-
-async def forgot_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    await query.edit_message_text("🔐 *RECUPERAR CONTRASEÑA*\n\nEnvía:\n*Nombre y Apellido:*\n*Email:*\n*Teléfono:*", parse_mode="Markdown")
-    return FORGOT_PASSWORD
-
-async def process_forgot_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_data = update.message.text
-    keyboard = [[InlineKeyboardButton("🔙 Volver", callback_data="plan_premium")]]
-    await update.message.reply_text(f"✅ Solicitud recibida.\n\n📧 {ADMIN_EMAIL}", reply_markup=InlineKeyboardMarkup(keyboard))
-    logger.info(f"Recuperación:\n{user_data}")
+    await query.edit_message_text(message, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
     return CHOOSING_PLAN
 
 async def buy_premium(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
-    await query.edit_message_text("💳 *COMPRAR PREMIUM*\n\nEnvía:\n*Nombre:*\n*Celular:*\n*Email:*", parse_mode="Markdown")
+    
+    message = (
+        "💎 *COMPRAR PREMIUM*\n\n"
+        "📧 Envía tus datos al correo:\n"
+        f"📮 {ADMIN_EMAIL}\n\n"
+        "📝 Incluye:\n"
+        "• Nombre\n"
+        "• Email\n"
+        "• Plan deseado\n\n"
+        "⏱ Te responderemos en 24h\n\n"
+        f"{FIRMA_TEXTO}"
+    )
+    
+    keyboard = [
+        [InlineKeyboardButton("🔙 Volver", callback_data="plan_premium")]
+    ]
+    
+    await query.edit_message_text(message, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
     return PREMIUM_BUY_DATA
 
-async def premium_buy_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_data = update.message.text
-    keyboard = [[InlineKeyboardButton("🔙 Volver", callback_data="back_start")]]
-    text = f"✅ *DATOS RECIBIDOS*\n\n💰 Paga $27 USD a:\n```THEGITANO2AX.PF```\n\n📧 Envía comprobante a:\n```{ADMIN_EMAIL}```\n\n{FIRMA_TEXTO}"
-    await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
-    logger.info(f"Compra:\n{user_data}")
+async def premium_login(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.edit_message_text(
+        "🔐 *INICIAR SESIÓN PREMIUM*\n\n📝 Escribe tu usuario:",
+        parse_mode="Markdown"
+    )
+    return PREMIUM_USERNAME
+
+async def premium_username(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    username = update.message.text.strip()
+    
+    if username not in PREMIUM_USERS:
+        keyboard = [[InlineKeyboardButton("🔙 Volver", callback_data="plan_premium")]]
+        await update.message.reply_text(
+            "❌ Usuario no encontrado\n\n"
+            "💡 ¿Olvidaste tu contraseña?",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        return CHOOSING_PLAN
+    
+    context.user_data["temp_username"] = username
+    await update.message.reply_text("🔑 Escribe tu contraseña:")
+    return PREMIUM_PASSWORD
+
+async def premium_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    password = update.message.text.strip()
+    username = context.user_data.get("temp_username")
+    uid = update.effective_user.id
+    
+    if username and PREMIUM_USERS.get(username, {}).get("password") == password:
+        active_sessions[uid] = username
+        context.user_data["is_premium"] = True
+        await update.message.reply_text("✅ ¡Sesión iniciada!")
+        
+        fake_query = type('obj', (object,), {
+            'edit_message_text': update.message.reply_text,
+            'answer': lambda: None
+        })()
+        fake_update = type('obj', (object,), {
+            'callback_query': fake_query,
+            'effective_user': update.effective_user
+        })()
+        
+        return await show_premium_menu(fake_update, context)
+    else:
+        keyboard = [
+            [InlineKeyboardButton("🔄 Reintentar", callback_data="premium_login")],
+            [InlineKeyboardButton("❓ Olvidé mi contraseña", callback_data="forgot_password")],
+            [InlineKeyboardButton("🔙 Volver", callback_data="plan_premium")]
+        ]
+        await update.message.reply_text(
+            "❌ Contraseña incorrecta",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        return CHOOSING_PLAN
+
+async def forgot_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.edit_message_text(
+        f"📧 Envía un email a:\n{ADMIN_EMAIL}\n\n"
+        "Incluye tu usuario registrado.\n\n"
+        f"{FIRMA_TEXTO}"
+    )
+    return FORGOT_PASSWORD
+
+async def process_forgot_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = [[InlineKeyboardButton("🔙 Volver", callback_data="plan_premium")]]
+    await update.message.reply_text(
+        "✅ Solicitud recibida.\n"
+        f"Revisa {ADMIN_EMAIL} en 24h.",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
     return CHOOSING_PLAN
 
 async def show_premium_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
     uid = update.effective_user.id
-    if not is_premium_active(uid):
-        return await plan_premium(update, context)
+    
     info = get_premium_info(uid)
+    if not info:
+        return await plan_premium(update, context)
+    
+    message = (
+        f"💎 *MENÚ PREMIUM*\n\n"
+        f"👤 Usuario: {info['name']}\n"
+        f"⏰ Días restantes: {info['days_left']}\n\n"
+        "🎯 *Elige una función:*"
+    )
+    
     keyboard = [
         [InlineKeyboardButton("📝 Texto a Voz", callback_data="premium_texto")],
-        [InlineKeyboardButton("📄 Traducir Documentos", callback_data="premium_documento")],
-        [InlineKeyboardButton("🎙️ Documentos a Voz", callback_data="premium_doc_voz")],
-        [InlineKeyboardButton("🔊 Traducir Audio", callback_data="premium_audio")],
+        [InlineKeyboardButton("🌐 Traductor Documentos", callback_data="premium_documento")],
+        [InlineKeyboardButton("📋 Documentos a Voz", callback_data="premium_doc_voz")],
+        [InlineKeyboardButton("🎤 Traducir Audio", callback_data="premium_audio")],
         [InlineKeyboardButton("🚪 Cerrar Sesión", callback_data="premium_logout")]
     ]
-    text = f"✨ *BIENVENIDO {info['name'].upper()}* ✨\n\n⏰ *{info['days_left']} días* restantes\n\n💎 *MENÚ PREMIUM*"
-    if update.callback_query:
-        await update.callback_query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
-    elif update.message:
-        await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+    
+    await query.edit_message_text(message, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
     return CHOOSING_PLAN
 
 async def free_texto(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
     uid = update.effective_user.id
+    
     if not can_use_free(uid, "texto"):
-        keyboard = [[InlineKeyboardButton("💎 PREMIUM", callback_data="plan_premium")]]
-        await query.edit_message_text("❌ Ya usaste FREE.", reply_markup=InlineKeyboardMarkup(keyboard))
+        await query.answer("❌ Ya usaste esta función", show_alert=True)
         return CHOOSING_PLAN
+    
     context.user_data["waiting_text"] = True
     context.user_data["is_premium"] = False
-    keyboard = [[InlineKeyboardButton("🔙 Cancelar", callback_data="plan_free")]]
-    await query.edit_message_text("📝 *TEXTO A VOZ*\n\n🔄 ES → EN o EN → ES\n\nEnvía tu texto:", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+    
+    # Enviar imagen guía si existe
+    try:
+        if os.path.exists(BOT_IMAGE_PATH):
+            with open(BOT_IMAGE_PATH, 'rb') as photo:
+                await query.message.reply_photo(
+                    photo=photo,
+                    caption=(
+                        "📝 *TEXTO A VOZ*\n\n"
+                        "📌 Guía de uso:\n"
+                        "1️⃣ Envía un texto\n"
+                        "2️⃣ Elige si quieres traducción\n"
+                        "3️⃣ Recibe tu audio\n\n"
+                        f"{FIRMA_TEXTO}"
+                    ),
+                    parse_mode="Markdown"
+                )
+        else:
+            await query.message.reply_text(
+                "📝 *TEXTO A VOZ*\n\n"
+                "✍️ Envía el texto que quieres convertir a voz\n\n"
+                f"{FIRMA_TEXTO}",
+                parse_mode="Markdown"
+            )
+    except Exception as e:
+        logger.error(f"Error enviando imagen: {e}")
+        await query.message.reply_text(
+            "📝 *TEXTO A VOZ*\n\n"
+            "✍️ Envía el texto que quieres convertir a voz\n\n"
+            f"{FIRMA_TEXTO}",
+            parse_mode="Markdown"
+        )
+    
+    await query.answer()
     return CHOOSING_PLAN
 
 async def premium_texto(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
+    uid = update.effective_user.id
+    
+    if not is_premium_active(uid):
+        await query.answer("❌ Sesión expirada", show_alert=True)
+        return await plan_premium(update, context)
+    
     context.user_data["waiting_text"] = True
     context.user_data["is_premium"] = True
-    keyboard = [[InlineKeyboardButton("🔙 Volver", callback_data="premium_menu")]]
-    await query.edit_message_text("📝 *TEXTO A VOZ*\n\n🔄 ES → EN o EN → ES\n\nEnvía tu texto:", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+    
+    # Enviar imagen guía si existe
+    try:
+        if os.path.exists(BOT_IMAGE_PATH):
+            with open(BOT_IMAGE_PATH, 'rb') as photo:
+                await query.message.reply_photo(
+                    photo=photo,
+                    caption=(
+                        "📝 *TEXTO A VOZ*\n\n"
+                        "📌 Guía de uso:\n"
+                        "1️⃣ Envía un texto\n"
+                        "2️⃣ Elige si quieres traducción\n"
+                        "3️⃣ Recibe tu audio\n\n"
+                        f"{FIRMA_TEXTO}"
+                    ),
+                    parse_mode="Markdown"
+                )
+        else:
+            await query.message.reply_text(
+                "📝 *TEXTO A VOZ*\n\n"
+                "✍️ Envía el texto que quieres convertir a voz\n\n"
+                f"{FIRMA_TEXTO}",
+                parse_mode="Markdown"
+            )
+    except Exception as e:
+        logger.error(f"Error enviando imagen: {e}")
+        await query.message.reply_text(
+            "📝 *TEXTO A VOZ*\n\n"
+            "✍️ Envía el texto que quieres convertir a voz\n\n"
+            f"{FIRMA_TEXTO}",
+            parse_mode="Markdown"
+        )
+    
+    await query.answer()
     return CHOOSING_PLAN
 
 async def free_documento(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
     uid = update.effective_user.id
+    
     if not can_use_free(uid, "documento"):
-        keyboard = [[InlineKeyboardButton("💎 PREMIUM", callback_data="plan_premium")]]
-        await query.edit_message_text("❌ Ya usaste FREE.", reply_markup=InlineKeyboardMarkup(keyboard))
+        await query.answer("❌ Ya usaste esta función", show_alert=True)
         return CHOOSING_PLAN
+    
     context.user_data["waiting_document"] = True
     context.user_data["document_mode"] = "translate"
     context.user_data["is_premium"] = False
-    keyboard = [[InlineKeyboardButton("🔙 Cancelar", callback_data="plan_free")]]
-    await query.edit_message_text("📄 *TRADUCTOR DE DOCUMENTOS*\n\n🔄 ES ↔ EN\n\nEnvía .docx o .pdf:", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+    
+    await query.message.reply_text(
+        "📄 *TRADUCTOR DE DOCUMENTOS*\n\n"
+        "📎 Envía un documento (PDF o DOCX)\n\n"
+        "🌐 Se traducirá automáticamente:\n"
+        "• 🇪🇸 Español → 🇺🇸 Inglés\n"
+        "• 🇺🇸 Inglés → 🇪🇸 Español\n\n"
+        "📋 El documento se entregará en el mismo formato\n\n"
+        f"{FIRMA_TEXTO}",
+        parse_mode="Markdown"
+    )
+    await query.answer()
     return CHOOSING_PLAN
 
 async def premium_documento(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
+    uid = update.effective_user.id
+    
+    if not is_premium_active(uid):
+        await query.answer("❌ Sesión expirada", show_alert=True)
+        return await plan_premium(update, context)
+    
     context.user_data["waiting_document"] = True
     context.user_data["document_mode"] = "translate"
     context.user_data["is_premium"] = True
-    keyboard = [[InlineKeyboardButton("🔙 Volver", callback_data="premium_menu")]]
-    await query.edit_message_text("📄 *TRADUCTOR DE DOCUMENTOS*\n\n🔄 ES ↔ EN\n\nEnvía .docx o .pdf:", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+    
+    await query.message.reply_text(
+        "📄 *TRADUCTOR DE DOCUMENTOS*\n\n"
+        "📎 Envía un documento (PDF o DOCX)\n\n"
+        "🌐 Se traducirá automáticamente:\n"
+        "• 🇪🇸 Español → 🇺🇸 Inglés\n"
+        "• 🇺🇸 Inglés → 🇪🇸 Español\n\n"
+        "📋 El documento se entregará en el mismo formato\n\n"
+        f"{FIRMA_TEXTO}",
+        parse_mode="Markdown"
+    )
+    await query.answer()
     return CHOOSING_PLAN
 
 async def free_doc_voz(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
     uid = update.effective_user.id
+    
     if not can_use_free(uid, "doc_voz"):
-        keyboard = [[InlineKeyboardButton("💎 PREMIUM", callback_data="plan_premium")]]
-        await query.edit_message_text("❌ Ya usaste FREE.", reply_markup=InlineKeyboardMarkup(keyboard))
+        await query.answer("❌ Ya usaste esta función", show_alert=True)
         return CHOOSING_PLAN
+    
     context.user_data["waiting_document"] = True
     context.user_data["document_mode"] = "voice"
     context.user_data["is_premium"] = False
-    keyboard = [[InlineKeyboardButton("🔙 Cancelar", callback_data="plan_free")]]
-    await query.edit_message_text("🎙️ *DOCUMENTOS A VOZ*\n\n🔄 ES ↔ EN\n\nEnvía .docx o .pdf:", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+    
+    await query.message.reply_text(
+        "📋 *DOCUMENTOS A VOZ*\n\n"
+        "📎 Envía un documento (PDF o DOCX)\n\n"
+        "🔊 Recibirás el audio del contenido traducido\n\n"
+        f"{FIRMA_TEXTO}",
+        parse_mode="Markdown"
+    )
+    await query.answer()
     return CHOOSING_PLAN
 
 async def premium_doc_voz(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
+    uid = update.effective_user.id
+    
+    if not is_premium_active(uid):
+        await query.answer("❌ Sesión expirada", show_alert=True)
+        return await plan_premium(update, context)
+    
     context.user_data["waiting_document"] = True
     context.user_data["document_mode"] = "voice"
     context.user_data["is_premium"] = True
-    keyboard = [[InlineKeyboardButton("🔙 Volver", callback_data="premium_menu")]]
-    await query.edit_message_text("🎙️ *DOCUMENTOS A VOZ*\n\n🔄 ES ↔ EN\n\nEnvía .docx o .pdf:", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+    
+    await query.message.reply_text(
+        "📋 *DOCUMENTOS A VOZ*\n\n"
+        "📎 Envía un documento (PDF o DOCX)\n\n"
+        "🔊 Recibirás el audio del contenido traducido\n\n"
+        f"{FIRMA_TEXTO}",
+        parse_mode="Markdown"
+    )
+    await query.answer()
     return CHOOSING_PLAN
 
 async def free_audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
     uid = update.effective_user.id
+    
     if not can_use_free(uid, "audio"):
-        keyboard = [[InlineKeyboardButton("💎 PREMIUM", callback_data="plan_premium")]]
-        await query.edit_message_text("❌ Ya usaste FREE.", reply_markup=InlineKeyboardMarkup(keyboard))
+        await query.answer("❌ Ya usaste esta función", show_alert=True)
         return CHOOSING_PLAN
+    
     context.user_data["waiting_audio"] = True
     context.user_data["is_premium"] = False
-    keyboard = [[InlineKeyboardButton("🔙 Cancelar", callback_data="plan_free")]]
-    await query.edit_message_text("🔊 *TRADUCTOR DE AUDIO*\n\n🔄 ES ↔ EN\n\nEnvía nota de voz:", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+    
+    await query.message.reply_text(
+        "🎤 *TRADUCIR AUDIO*\n\n"
+        "🎙 Envía un audio o nota de voz\n\n"
+        "🌐 Se transcribirá y traducirá:\n"
+        "• 🇪🇸 Español → 🇺🇸 Inglés\n"
+        "• 🇺🇸 Inglés → 🇪🇸 Español\n\n"
+        f"{FIRMA_TEXTO}",
+        parse_mode="Markdown"
+    )
+    await query.answer()
     return CHOOSING_PLAN
 
 async def premium_audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
+    uid = update.effective_user.id
+    
+    if not is_premium_active(uid):
+        await query.answer("❌ Sesión expirada", show_alert=True)
+        return await plan_premium(update, context)
+    
     context.user_data["waiting_audio"] = True
     context.user_data["is_premium"] = True
-    keyboard = [[InlineKeyboardButton("🔙 Volver", callback_data="premium_menu")]]
-    await query.edit_message_text("🔊 *TRADUCTOR DE AUDIO*\n\n🔄 ES ↔ EN\n\nEnvía nota de voz:", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+    
+    await query.message.reply_text(
+        "🎤 *TRADUCIR AUDIO*\n\n"
+        "🎙 Envía un audio o nota de voz\n\n"
+        "🌐 Se transcribirá y traducirá:\n"
+        "• 🇪🇸 Español → 🇺🇸 Inglés\n"
+        "• 🇺🇸 Inglés → 🇪🇸 Español\n\n"
+        f"{FIRMA_TEXTO}",
+        parse_mode="Markdown"
+    )
+    await query.answer()
     return CHOOSING_PLAN
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
-    if not context.user_data.get("waiting_text", False):
-        return
     
-    try:
-        processing_msg = await update.message.reply_text("⏳ Procesando...")
-        text = update.message.text
+    # Si está esperando respuesta de traducción
+    if context.user_data.get("waiting_translate_response"):
+        response = update.message.text.strip().upper()
         
-        lang = detect_language(text)
-        logger.info(f"📊 TEXTO A VOZ - Idioma detectado: {lang}")
+        if response not in ["SI", "SÍ", "NO"]:
+            keyboard = [
+                [InlineKeyboardButton("✅ SI", callback_data="translate_yes")],
+                [InlineKeyboardButton("❌ NO", callback_data="translate_no")]
+            ]
+            await update.message.reply_text(
+                "❓ Por favor, responde SI o NO\n\n"
+                "¿Quieres que el audio sea traducido?",
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+            return CHOOSING_PLAN
         
-        if lang == "es" or lang.startswith("es"):
-            translated = translate_text(text, source="es", target="en")
-            audio_lang = "en"
-            lang_display = "🇪🇸→🇺🇸"
-            logger.info("✅ Español detectado → Audio en INGLÉS")
+        text_to_process = context.user_data.get("text_to_process", "")
+        lang = detect_language(text_to_process)
+        
+        processing_msg = await update.message.reply_text("⏳ Generando audio...")
+        
+        if response in ["SI", "SÍ"]:
+            # Usuario quiere traducción
+            if lang == "es":
+                target_lang = "en"
+                audio_lang = "en"
+                lang_display = "🇪🇸→🇺🇸"
+                translated_text = translate_text(text_to_process, source="es", target="en")
+            else:
+                target_lang = "es"
+                audio_lang = "es"
+                lang_display = "🇺🇸→🇪🇸"
+                translated_text = translate_text(text_to_process, source="en", target="es")
+            
+            audio = tts(translated_text, audio_lang)
+            caption = f"{lang_display} Audio traducido\n\n{FIRMA_TEXTO}"
         else:
-            translated = translate_text(text, source="en", target="es")
-            audio_lang = "es"
-            lang_display = "🇺🇸→🇪🇸"
-            logger.info("✅ Inglés detectado → Audio en ESPAÑOL")
+            # Usuario NO quiere traducción - audio en idioma original
+            if lang == "es":
+                audio_lang = "es"
+            else:
+                audio_lang = "en"
+            
+            audio = tts(text_to_process, audio_lang)
+            caption = f"🔊 Audio en idioma original\n\n{FIRMA_TEXTO}"
         
-        await update.message.reply_text(f"{lang_display} *Traducción:*\n\n{translated}", parse_mode="Markdown")
-        
-        audio = tts(translated, audio_lang)
         if audio:
-            await update.message.reply_voice(audio, caption=f"{lang_display} Audio traducido")
+            await update.message.reply_voice(audio, caption=caption)
+        else:
+            await update.message.reply_text("❌ Error al generar audio.")
+            await processing_msg.delete()
+            return CHOOSING_PLAN
         
         if not context.user_data.get("is_premium", False):
             mark_free_used(uid, "texto")
@@ -516,15 +755,44 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             keyboard = [[InlineKeyboardButton("💎 PREMIUM", callback_data="plan_premium")]]
             await update.message.reply_text(f"✅ Ya usaste FREE\n\n{FIRMA_TEXTO}", reply_markup=InlineKeyboardMarkup(keyboard))
             context.user_data["waiting_text"] = False
+            context.user_data["waiting_translate_response"] = False
         else:
             back = "premium_menu" if context.user_data.get("is_premium") else "plan_free"
             keyboard = [[InlineKeyboardButton("🔙 Volver al Menú", callback_data=back)]]
             await update.message.reply_text(f"✅ Listo. Envía otro texto o vuelve.\n\n{FIRMA_TEXTO}", reply_markup=InlineKeyboardMarkup(keyboard))
         
+        context.user_data["waiting_translate_response"] = False
+        context.user_data["text_to_process"] = ""
         await processing_msg.delete()
-    except Exception as e:
-        logger.error(f"❌ Error texto: {e}")
-        await update.message.reply_text("❌ Error.")
+        return CHOOSING_PLAN
+    
+    # Si está esperando texto para convertir a voz
+    if not context.user_data.get("waiting_text", False):
+        return CHOOSING_PLAN
+    
+    text = update.message.text.strip()
+    
+    if not text:
+        await update.message.reply_text("❌ Texto vacío. Envía un texto válido.")
+        return CHOOSING_PLAN
+    
+    # Guardar el texto y preguntar si quiere traducción
+    context.user_data["text_to_process"] = text
+    context.user_data["waiting_translate_response"] = True
+    
+    keyboard = [
+        [InlineKeyboardButton("✅ SI", callback_data="translate_yes")],
+        [InlineKeyboardButton("❌ NO", callback_data="translate_no")]
+    ]
+    
+    await update.message.reply_text(
+        "🌐 ¿Quieres que el audio sea traducido?\n\n"
+        "• SI: El audio se traducirá (ES↔EN)\n"
+        "• NO: El audio será en el idioma original",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+    
+    return CHOOSING_PLAN
 
 async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
@@ -532,30 +800,35 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     try:
-        doc = update.message.document
-        document_mode = context.user_data.get("document_mode", "translate")
+        processing_msg = await update.message.reply_text("⏳ Procesando documento...")
         
-        processing_msg = await update.message.reply_text(f"⏳ Procesando documento...")
+        doc = update.message.document
         file = await context.bot.get_file(doc.file_id)
         data = await file.download_as_bytearray()
         
-        if doc.file_name.endswith(".docx"):
-            text = extract_text_from_docx(data)
-        elif doc.file_name.endswith(".pdf"):
-            text = extract_text_from_pdf(data)
-        else:
-            await update.message.reply_text("❌ Solo .docx o .pdf")
+        document_mode = context.user_data.get("document_mode", "translate")
+        is_docx = doc.file_name.endswith(".docx")
+        is_pdf = doc.file_name.endswith(".pdf")
+        
+        if not (is_docx or is_pdf):
+            await update.message.reply_text("❌ Solo se permiten archivos PDF o DOCX")
             await processing_msg.delete()
             return
+        
+        # Extraer texto según tipo de documento
+        if is_docx:
+            text = extract_text_from_docx(data)
+        else:
+            text = extract_text_from_pdf(data)
         
         if not text:
-            await update.message.reply_text("❌ No se extrajo texto.")
+            await update.message.reply_text("❌ No se pudo extraer texto del documento")
             await processing_msg.delete()
             return
         
-        lang = detect_language(text[:500])
+        lang = detect_language(text)
         
-        if lang == "es" or lang.startswith("es"):
+        if lang == "es":
             target_lang = "en"
             lang_display = "🇪🇸→🇺🇸"
             audio_lang = "en"
@@ -564,17 +837,22 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
             lang_display = "🇺🇸→🇪🇸"
             audio_lang = "es"
         
-        translated_text = translate_text(text, source=lang, target=target_lang)
-        
         if document_mode == "translate":
-            if doc.file_name.endswith(".docx"):
+            # Modo traducción - mantener formato original
+            if is_docx:
                 translated_file = translate_docx(data, source_lang=lang, target_lang=target_lang)
+                extension = ".docx"
             else:
-                translated_file = translate_pdf_to_docx(data, source_lang=lang, target_lang=target_lang)
+                translated_file = translate_pdf(data, source_lang=lang, target_lang=target_lang)
+                extension = ".pdf"
             
             if translated_file:
-                filename = f"traducido_{lang_display.replace('🇪🇸', 'ES').replace('🇺🇸', 'EN').replace('→', '_')}_{doc.file_name.replace('.pdf', '.docx')}"
-                await update.message.reply_document(document=translated_file, filename=filename, caption=f"{lang_display} Documento traducido\n\n{FIRMA_TEXTO}")
+                filename = f"traducido_{lang_display.replace('🇪🇸', 'ES').replace('🇺🇸', 'EN').replace('→', '_')}_{doc.file_name.replace('.pdf', extension).replace('.docx', extension)}"
+                await update.message.reply_document(
+                    document=translated_file,
+                    filename=filename,
+                    caption=f"{lang_display} Documento traducido\n\n{FIRMA_TEXTO}"
+                )
             else:
                 await update.message.reply_text("❌ Error al traducir.")
                 await processing_msg.delete()
@@ -583,7 +861,10 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if not context.user_data.get("is_premium", False):
                 mark_free_used(uid, "documento")
         else:
+            # Modo documento a voz
+            translated_text = translate_text(text, source=lang, target=target_lang)
             audio = tts(translated_text, audio_lang)
+            
             if audio:
                 await update.message.reply_voice(audio, caption=f"{lang_display} Documento a voz\n\n{FIRMA_TEXTO}")
             else:
@@ -680,6 +961,35 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     data = query.data
+    
+    # Manejar respuestas de traducción SI/NO
+    if data == "translate_yes":
+        # Simular que el usuario escribió "SI"
+        fake_message = type('obj', (object,), {
+            'text': 'SI',
+            'reply_text': query.message.reply_text,
+            'reply_voice': query.message.reply_voice
+        })()
+        fake_update = type('obj', (object,), {
+            'message': fake_message,
+            'effective_user': update.effective_user,
+            'callback_query': query
+        })()
+        return await handle_text(fake_update, context)
+    
+    elif data == "translate_no":
+        # Simular que el usuario escribió "NO"
+        fake_message = type('obj', (object,), {
+            'text': 'NO',
+            'reply_text': query.message.reply_text,
+            'reply_voice': query.message.reply_voice
+        })()
+        fake_update = type('obj', (object,), {
+            'message': fake_message,
+            'effective_user': update.effective_user,
+            'callback_query': query
+        })()
+        return await handle_text(fake_update, context)
     
     if data == "back_start":
         context.user_data.clear()
