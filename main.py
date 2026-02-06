@@ -360,6 +360,17 @@ async def buy_premium(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.edit_message_text(message, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
     return PREMIUM_BUY_DATA
 
+async def premium_buy_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Maneja los datos enviados para comprar premium"""
+    keyboard = [[InlineKeyboardButton("🔙 Volver", callback_data="plan_premium")]]
+    await update.message.reply_text(
+        "✅ Datos recibidos.\n\n"
+        f"Te contactaremos a: {ADMIN_EMAIL}\n\n"
+        f"{FIRMA_TEXTO}",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+    return CHOOSING_PLAN
+
 async def premium_login(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.edit_message_text(
