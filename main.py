@@ -248,7 +248,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("💎 PREMIUM", callback_data="plan_premium")]
     ]
     
-    await update.message.reply_text(message, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+    # Si viene de un callback, usar edit_message_text, si no, reply_text
+    if update.callback_query:
+        await update.callback_query.edit_message_text(message, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+    else:
+        await update.message.reply_text(message, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+    
     return CHOOSING_PLAN
 
 async def plan_free(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1037,7 +1042,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         uid = update.effective_user.id
         if uid in active_sessions:
             del active_sessions[uid]
-        await query.edit_message_text("✅ Sesión cerrada.", parse_mode="Markdown")
+        context.user_data.clear()
         return await start(update, context)
     
     return CHOOSING_PLAN
@@ -1070,7 +1075,10 @@ def main():
             FORGOT_PASSWORD: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_forgot_password)],
         },
         fallbacks=[CommandHandler("start", start)],
-        allow_reentry=True
+        allow_reentry=True,
+        per_message=False,
+        per_chat=True,
+        per_user=True
     )
     
     app.add_handler(conv_handler)
