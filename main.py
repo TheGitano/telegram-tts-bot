@@ -37,7 +37,7 @@ free_usage = {}
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-CHOOSING_PLAN, PREMIUM_USERNAME, PREMIUM_PASSWORD, PREMIUM_BUY_DATA, FORGOT_PASSWORD = range(5)
+CHOOSING_PLAN, PREMIUM_USERNAME, PREMIUM_PASSWORD, PREMIUM_BUY_DATA, FORGOT_PASSWORD, BUY_NOMBRE, BUY_APELLIDO, BUY_EMAIL, BUY_CELULAR, BUY_METODO_PAGO = range(10)
 
 def is_premium_active(uid):
     if uid not in active_sessions:
@@ -347,33 +347,201 @@ async def buy_premium(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     
     message = (
-        "💎 *COMPRAR PREMIUM*\n\n"
-        "📧 Envía tus datos al correo:\n"
-        f"📮 {ADMIN_EMAIL}\n\n"
-        "📝 Incluye:\n"
-        "• Nombre\n"
-        "• Email\n"
-        "• Plan deseado\n\n"
-        "⏱ Te responderemos en 24h\n\n"
+        "💎 *MEMBRESÍA PREMIUM*\n\n"
+        "💵 *COSTO:* $27 USD/mes\n\n"
+        "✨ *BENEFICIOS:*\n"
+        "• Acceso ilimitado a todas las funciones\n"
+        "• Sin restricciones de uso\n"
+        "• Soporte prioritario\n"
+        "• Validez por 30 días\n\n"
+        "📋 *PROCESO DE COMPRA:*\n"
+        "1️⃣ Completa tus datos\n"
+        "2️⃣ Realiza el pago\n"
+        "3️⃣ Envía tu comprobante\n"
+        "4️⃣ Activa tu cuenta en 24h\n\n"
+        "💳 *MÉTODOS DE PAGO:*\n\n"
+        "🏦 *Western Union*\n"
+        "   Alias: THEGITANO2AX.PF\n"
+        "   Nombre: Matias Molina\n\n"
+        "💸 *Zelle*\n"
+        "   Tel: 3053314405\n"
+        "   Nombre: Sebastian Tosi\n\n"
+        "👇 *Presiona CONTINUAR para registrarte*\n\n"
         f"{FIRMA_TEXTO}"
     )
     
     keyboard = [
+        [InlineKeyboardButton("✅ CONTINUAR", callback_data="start_buy_form")],
         [InlineKeyboardButton("🔙 Volver", callback_data="plan_premium")]
     ]
     
     await query.edit_message_text(message, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
-    return PREMIUM_BUY_DATA
+    return CHOOSING_PLAN
 
-async def premium_buy_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Maneja los datos enviados para comprar premium"""
-    keyboard = [[InlineKeyboardButton("🔙 Volver", callback_data="plan_premium")]]
-    await update.message.reply_text(
-        "✅ Datos recibidos.\n\n"
-        f"Te contactaremos a: {ADMIN_EMAIL}\n\n"
-        f"{FIRMA_TEXTO}",
-        reply_markup=InlineKeyboardMarkup(keyboard)
+async def start_buy_form(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Inicia el formulario de compra"""
+    query = update.callback_query
+    await query.answer()
+    
+    # Inicializar datos del formulario
+    context.user_data["buy_form"] = {}
+    
+    await query.edit_message_text(
+        "📝 *FORMULARIO DE REGISTRO*\n\n"
+        "Por favor, escribe tu *NOMBRE COMPLETO:*",
+        parse_mode="Markdown"
     )
+    return BUY_NOMBRE
+
+async def buy_nombre(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Guarda el nombre y pide apellido"""
+    nombre = update.message.text.strip()
+    context.user_data["buy_form"]["nombre"] = nombre
+    
+    await update.message.reply_text(
+        f"✅ Nombre: {nombre}\n\n"
+        "Ahora escribe tu *APELLIDO(S):*",
+        parse_mode="Markdown"
+    )
+    return BUY_APELLIDO
+
+async def buy_apellido(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Guarda el apellido y pide email"""
+    apellido = update.message.text.strip()
+    context.user_data["buy_form"]["apellido"] = apellido
+    
+    await update.message.reply_text(
+        f"✅ Apellido: {apellido}\n\n"
+        "Ahora escribe tu *CORREO ELECTRÓNICO:*",
+        parse_mode="Markdown"
+    )
+    return BUY_EMAIL
+
+async def buy_email(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Guarda el email y pide celular"""
+    email = update.message.text.strip()
+    
+    # Validación básica de email
+    if "@" not in email or "." not in email:
+        await update.message.reply_text(
+            "❌ Email inválido. Por favor, escribe un correo válido:"
+        )
+        return BUY_EMAIL
+    
+    context.user_data["buy_form"]["email"] = email
+    
+    await update.message.reply_text(
+        f"✅ Email: {email}\n\n"
+        "Ahora escribe tu *NÚMERO DE CELULAR:*\n"
+        "(Con código de país, ej: +1234567890)",
+        parse_mode="Markdown"
+    )
+    return BUY_CELULAR
+
+async def buy_celular(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Guarda el celular y muestra resumen"""
+    celular = update.message.text.strip()
+    context.user_data["buy_form"]["celular"] = celular
+    
+    # Obtener todos los datos
+    datos = context.user_data["buy_form"]
+    
+    mensaje_resumen = (
+        "📋 *RESUMEN DE TUS DATOS*\n\n"
+        f"👤 Nombre: {datos['nombre']} {datos['apellido']}\n"
+        f"📧 Email: {datos['email']}\n"
+        f"📱 Celular: {datos['celular']}\n\n"
+        "💳 *MÉTODOS DE PAGO DISPONIBLES:*\n\n"
+        "🏦 *Western Union*\n"
+        "   Alias: THEGITANO2AX.PF\n"
+        "   Nombre: Matias Molina\n\n"
+        "💸 *Zelle*\n"
+        "   Tel: 3053314405\n"
+        "   Nombre: Sebastian Tosi\n\n"
+        "¿Con qué método realizaste o realizarás el pago?"
+    )
+    
+    keyboard = [
+        [InlineKeyboardButton("🏦 Western Union", callback_data="pago_western")],
+        [InlineKeyboardButton("💸 Zelle", callback_data="pago_zelle")],
+        [InlineKeyboardButton("🔄 Cancelar", callback_data="plan_premium")]
+    ]
+    
+    await update.message.reply_text(
+        mensaje_resumen,
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode="Markdown"
+    )
+    return BUY_METODO_PAGO
+
+async def buy_metodo_pago(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Procesa el método de pago seleccionado y envía el email"""
+    query = update.callback_query
+    await query.answer()
+    
+    # Determinar método de pago
+    if query.data == "pago_western":
+        metodo = "Western Union"
+    elif query.data == "pago_zelle":
+        metodo = "Zelle"
+    else:
+        return CHOOSING_PLAN
+    
+    context.user_data["buy_form"]["metodo_pago"] = metodo
+    datos = context.user_data["buy_form"]
+    
+    # Crear el mensaje para enviar por email (simulado)
+    email_content = f"""
+NUEVA SOLICITUD DE MEMBRESÍA PREMIUM
+
+═══════════════════════════════
+DATOS DEL CLIENTE
+═══════════════════════════════
+Nombre Completo: {datos['nombre']} {datos['apellido']}
+Email: {datos['email']}
+Celular: {datos['celular']}
+Método de Pago: {metodo}
+
+═══════════════════════════════
+INFORMACIÓN DE PAGO
+═══════════════════════════════
+Monto: $27 USD
+Período: 1 mes
+"""
+    
+    # Log para el administrador (en producción, aquí enviarías el email real)
+    logger.info(f"📧 NUEVA SOLICITUD PREMIUM:\n{email_content}")
+    
+    # Mensaje de confirmación al usuario
+    mensaje_confirmacion = (
+        "✅ *¡SOLICITUD ENVIADA!*\n\n"
+        f"Tus datos han sido enviados a:\n"
+        f"📮 {ADMIN_EMAIL}\n\n"
+        "📝 *RESUMEN:*\n"
+        f"👤 {datos['nombre']} {datos['apellido']}\n"
+        f"📧 {datos['email']}\n"
+        f"📱 {datos['celular']}\n"
+        f"💳 Método: {metodo}\n\n"
+        "⏳ *PRÓXIMOS PASOS:*\n"
+        "1️⃣ Realiza el pago de $27 USD\n"
+        "2️⃣ Envía el comprobante a nuestro email\n"
+        "3️⃣ Tu cuenta será activada en 24h\n\n"
+        f"{FIRMA_TEXTO}"
+    )
+    
+    keyboard = [
+        [InlineKeyboardButton("🏠 Volver al Inicio", callback_data="back_start")]
+    ]
+    
+    await query.edit_message_text(
+        mensaje_confirmacion,
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode="Markdown"
+    )
+    
+    # Limpiar datos del formulario
+    context.user_data["buy_form"] = {}
+    
     return CHOOSING_PLAN
 
 async def premium_login(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1016,6 +1184,10 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await plan_premium(update, context)
     elif data == "buy_premium":
         return await buy_premium(update, context)
+    elif data == "start_buy_form":
+        return await start_buy_form(update, context)
+    elif data in ["pago_western", "pago_zelle"]:
+        return await buy_metodo_pago(update, context)
     elif data == "premium_login":
         return await premium_login(update, context)
     elif data == "forgot_password":
@@ -1071,8 +1243,12 @@ def main():
             ],
             PREMIUM_USERNAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, premium_username)],
             PREMIUM_PASSWORD: [MessageHandler(filters.TEXT & ~filters.COMMAND, premium_password)],
-            PREMIUM_BUY_DATA: [MessageHandler(filters.TEXT & ~filters.COMMAND, premium_buy_data)],
             FORGOT_PASSWORD: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_forgot_password)],
+            BUY_NOMBRE: [MessageHandler(filters.TEXT & ~filters.COMMAND, buy_nombre)],
+            BUY_APELLIDO: [MessageHandler(filters.TEXT & ~filters.COMMAND, buy_apellido)],
+            BUY_EMAIL: [MessageHandler(filters.TEXT & ~filters.COMMAND, buy_email)],
+            BUY_CELULAR: [MessageHandler(filters.TEXT & ~filters.COMMAND, buy_celular)],
+            BUY_METODO_PAGO: [CallbackQueryHandler(button_callback)],
         },
         fallbacks=[CommandHandler("start", start)],
         allow_reentry=True,
