@@ -1,5 +1,6 @@
 import os
 import io
+import base64
 import logging
 from datetime import datetime, timedelta
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -19,8 +20,10 @@ from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.units import inch
+import anthropic
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 ADMIN_EMAIL = "corporatebusinessunitedstates@gmail.com"
 FIRMA_TEXTO = "🦅 𝓣𝓱𝓮𝓖𝓲𝓽𝓪𝓷𝓸 🦅"
 
@@ -61,12 +64,12 @@ def can_use_free(uid, function_name):
     if is_premium_active(uid):
         return True
     if uid not in free_usage:
-        free_usage[uid] = {"texto": False, "documento": False, "audio": False, "doc_voz": False}
-    return not free_usage[uid][function_name]
+        free_usage[uid] = {"texto": False, "documento": False, "audio": False, "doc_voz": False, "imagen": False}
+    return not free_usage[uid].get(function_name, False)
 
 def mark_free_used(uid, function_name):
     if uid not in free_usage:
-        free_usage[uid] = {"texto": False, "documento": False, "audio": False, "doc_voz": False}
+        free_usage[uid] = {"texto": False, "documento": False, "audio": False, "doc_voz": False, "imagen": False}
     free_usage[uid][function_name] = True
 
 def all_free_used(uid):
@@ -195,23 +198,18 @@ def translate_docx(file_bytes, source_lang="auto", target_lang="es"):
 def translate_pdf(file_bytes, source_lang="auto", target_lang="es"):
     """Traduce un PDF y lo devuelve como PDF"""
     try:
-        # Extraer texto del PDF
         text = extract_text_from_pdf(file_bytes)
         if not text:
             return None
         
-        # Traducir el texto
         translated_text = translate_text(text, source=source_lang, target=target_lang)
         
-        # Crear un nuevo PDF con el texto traducido
         output = io.BytesIO()
         pdf_canvas = SimpleDocTemplate(output, pagesize=letter)
         
-        # Estilos
         styles = getSampleStyleSheet()
         story = []
         
-        # Dividir el texto en párrafos y agregarlos
         for para in translated_text.split('\n'):
             if para.strip():
                 p = Paragraph(para, styles['Normal'])
@@ -225,6 +223,82 @@ def translate_pdf(file_bytes, source_lang="auto", target_lang="es"):
         logger.error(f"Error traduciendo PDF: {e}")
         return None
 
+# ============================================================
+# NUEVAS FUNCIONES DE IMAGEN CON CLAUDE VISION
+# ============================================================
+
+def analyze_image_with_claude(image_bytes, image_mime_type="image/jpeg", mode="analyze"):
+    """
+    Analiza una imagen usando Claude Vision API.
+    
+    mode:
+      - "extract"  → solo extrae el texto de la imagen
+      - "analyze"  → extrae texto + análisis experto (como abogado/asesor)
+    """
+    try:
+        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+        
+        image_b64 = base64.standard_b64encode(image_bytes).decode("utf-8")
+        
+        if mode == "extract":
+            prompt = (
+                "Extrae y transcribe con precisión TODO el texto visible en esta imagen. "
+                "No agregues interpretaciones ni comentarios. "
+                "Solo devuelve el texto exacto tal como aparece en la imagen, "
+                "respetando la estructura original (listas, tablas, párrafos, etc.)."
+            )
+        else:
+            prompt = (
+                "Eres un experto multidisciplinario que combina conocimientos legales, financieros y de asesoría. "
+                "Analiza la imagen proporcionada y realiza lo siguiente:\n\n"
+                "1. 📋 EXTRACCIÓN DE TEXTO: Transcribe con precisión todo el texto visible en la imagen.\n\n"
+                "2. 📊 ANÁLISIS DETALLADO: Explica en detalle qué significa el contenido de la imagen. "
+                "Si hay datos numéricos, fechas, nombres o información clave, destácalos claramente.\n\n"
+                "3. ⚠️ SITUACIÓN ACTUAL: Describe la situación real que refleja el documento o imagen, "
+                "incluyendo urgencias, riesgos o aspectos críticos que se deban tomar en cuenta.\n\n"
+                "4. ✅ CONSEJOS Y RECOMENDACIONES: Como si fueras un abogado y asesor experto, "
+                "brinda los mejores consejos y pasos de acción concretos para manejar la situación "
+                "descrita en la imagen. Si hay riesgos legales, financieros o de otra índole, "
+                "indícalos claramente y recomienda qué hacer.\n\n"
+                "5. 📌 CONCLUSIÓN: Resume los puntos más importantes y urgentes.\n\n"
+                "Responde en el mismo idioma que esté escrito el texto de la imagen. "
+                "Usa emojis para organizar visualmente las secciones."
+            )
+        
+        response = client.messages.create(
+            model="claude-opus-4-5",
+            max_tokens=4096,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": image_mime_type,
+                                "data": image_b64,
+                            },
+                        },
+                        {
+                            "type": "text",
+                            "text": prompt
+                        }
+                    ],
+                }
+            ],
+        )
+        
+        return response.content[0].text
+        
+    except Exception as e:
+        logger.error(f"Error analizando imagen con Claude: {e}")
+        return None
+
+# ============================================================
+# FIN FUNCIONES DE IMAGEN
+# ============================================================
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     context.user_data.clear()
@@ -237,7 +311,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🌐 Traductor Bidireccional\n"
         "📄 Traducir Documentos\n"
         "📋 Documentos a Voz\n"
-        "🎤 Traducir Audio\n\n"
+        "🎤 Traducir Audio\n"
+        "🖼️ Lector y Análisis de Imágenes\n\n"
         "💡 *SELECCIONA TU PLAN:* 💡\n\n"
         "🆓 *FREE:* 1 uso por función\n"
         "💎 *PREMIUM:* Uso ilimitado"
@@ -248,7 +323,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("💎 PREMIUM", callback_data="plan_premium")]
     ]
     
-    # Si viene de un callback, usar edit_message_text, si no, reply_text
     if update.callback_query:
         await update.callback_query.edit_message_text(message, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
     else:
@@ -270,6 +344,8 @@ async def plan_free(update: Update, context: ContextTypes.DEFAULT_TYPE):
             used_functions.append("📋 Documentos a Voz")
         if free_usage[uid].get("audio"):
             used_functions.append("🎤 Traducir Audio")
+        if free_usage[uid].get("imagen"):
+            used_functions.append("🖼️ Lector de Imágenes")
     
     if all_free_used(uid):
         message = (
@@ -309,6 +385,11 @@ async def plan_free(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         keyboard.append([InlineKeyboardButton("🎤 Traducir Audio ❌ Usado", callback_data="used")])
     
+    if can_use_free(uid, "imagen"):
+        keyboard.append([InlineKeyboardButton("🖼️ Lector de Imágenes", callback_data="free_imagen")])
+    else:
+        keyboard.append([InlineKeyboardButton("🖼️ Lector de Imágenes ❌ Usado", callback_data="used")])
+    
     keyboard.append([InlineKeyboardButton("💎 PREMIUM", callback_data="plan_premium")])
     keyboard.append([InlineKeyboardButton("🔙 Volver", callback_data="back_start")])
     
@@ -330,7 +411,8 @@ async def plan_premium(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🌐 Traductor Bidireccional\n"
         "📄 Traducir Documentos\n"
         "📋 Documentos a Voz\n"
-        "🎤 Traducir Audio\n\n"
+        "🎤 Traducir Audio\n"
+        "🖼️ Lector y Análisis de Imágenes\n\n"
         f"{FIRMA_TEXTO}"
     )
     
@@ -379,11 +461,8 @@ async def buy_premium(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return CHOOSING_PLAN
 
 async def start_buy_form(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Inicia el formulario de compra"""
     query = update.callback_query
     await query.answer()
-    
-    # Inicializar datos del formulario
     context.user_data["buy_form"] = {}
     
     await query.edit_message_text(
@@ -394,7 +473,6 @@ async def start_buy_form(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return BUY_NOMBRE
 
 async def buy_nombre(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Guarda el nombre y pide apellido"""
     nombre = update.message.text.strip()
     context.user_data["buy_form"]["nombre"] = nombre
     
@@ -406,7 +484,6 @@ async def buy_nombre(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return BUY_APELLIDO
 
 async def buy_apellido(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Guarda el apellido y pide email"""
     apellido = update.message.text.strip()
     context.user_data["buy_form"]["apellido"] = apellido
     
@@ -418,10 +495,8 @@ async def buy_apellido(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return BUY_EMAIL
 
 async def buy_email(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Guarda el email y pide celular"""
     email = update.message.text.strip()
     
-    # Validación básica de email
     if "@" not in email or "." not in email:
         await update.message.reply_text(
             "❌ Email inválido. Por favor, escribe un correo válido:"
@@ -439,11 +514,9 @@ async def buy_email(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return BUY_CELULAR
 
 async def buy_celular(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Guarda el celular y muestra resumen"""
     celular = update.message.text.strip()
     context.user_data["buy_form"]["celular"] = celular
     
-    # Obtener todos los datos
     datos = context.user_data["buy_form"]
     
     mensaje_resumen = (
@@ -475,11 +548,9 @@ async def buy_celular(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return BUY_METODO_PAGO
 
 async def buy_metodo_pago(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Procesa el método de pago seleccionado y envía el email"""
     query = update.callback_query
     await query.answer()
     
-    # Determinar método de pago
     if query.data == "pago_western":
         metodo = "Western Union"
     elif query.data == "pago_zelle":
@@ -490,7 +561,6 @@ async def buy_metodo_pago(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["buy_form"]["metodo_pago"] = metodo
     datos = context.user_data["buy_form"]
     
-    # Crear el mensaje para enviar por email (simulado)
     email_content = f"""
 NUEVA SOLICITUD DE MEMBRESÍA PREMIUM
 
@@ -509,10 +579,8 @@ Monto: $27 USD
 Período: 1 mes
 """
     
-    # Log para el administrador (en producción, aquí enviarías el email real)
     logger.info(f"📧 NUEVA SOLICITUD PREMIUM:\n{email_content}")
     
-    # Mensaje de confirmación al usuario
     mensaje_confirmacion = (
         "✅ *¡SOLICITUD ENVIADA!*\n\n"
         f"Tus datos han sido enviados a:\n"
@@ -539,7 +607,6 @@ Período: 1 mes
         parse_mode="Markdown"
     )
     
-    # Limpiar datos del formulario
     context.user_data["buy_form"] = {}
     
     return CHOOSING_PLAN
@@ -638,6 +705,7 @@ async def show_premium_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("🌐 Traductor Documentos", callback_data="premium_documento")],
         [InlineKeyboardButton("📋 Documentos a Voz", callback_data="premium_doc_voz")],
         [InlineKeyboardButton("🎤 Traducir Audio", callback_data="premium_audio")],
+        [InlineKeyboardButton("🖼️ Lector de Imágenes", callback_data="premium_imagen")],
         [InlineKeyboardButton("🚪 Cerrar Sesión", callback_data="premium_logout")]
     ]
     
@@ -655,7 +723,6 @@ async def free_texto(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["waiting_text"] = True
     context.user_data["is_premium"] = False
     
-    # Enviar imagen guía si existe
     try:
         if os.path.exists(BOT_IMAGE_PATH):
             with open(BOT_IMAGE_PATH, 'rb') as photo:
@@ -701,7 +768,6 @@ async def premium_texto(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["waiting_text"] = True
     context.user_data["is_premium"] = True
     
-    # Enviar imagen guía si existe
     try:
         if os.path.exists(BOT_IMAGE_PATH):
             with open(BOT_IMAGE_PATH, 'rb') as photo:
@@ -876,10 +942,319 @@ async def premium_audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     return CHOOSING_PLAN
 
+# ============================================================
+# HANDLERS DE IMAGEN - NUEVOS
+# ============================================================
+
+async def free_imagen(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    uid = update.effective_user.id
+    
+    if not can_use_free(uid, "imagen"):
+        await query.answer("❌ Ya usaste esta función", show_alert=True)
+        return CHOOSING_PLAN
+    
+    context.user_data["waiting_image"] = True
+    context.user_data["is_premium"] = False
+    
+    await query.message.reply_text(
+        "🖼️ *LECTOR Y ANÁLISIS DE IMÁGENES*\n\n"
+        "📸 Envía una imagen con texto\n\n"
+        "✨ *¿Qué puedo hacer?*\n"
+        "• Extraer todo el texto de la imagen\n"
+        "• Traducir el texto (ES↔EN)\n"
+        "• Convertir el texto a voz\n"
+        "• Analizar y dar consejos expertos\n\n"
+        f"{FIRMA_TEXTO}",
+        parse_mode="Markdown"
+    )
+    await query.answer()
+    return CHOOSING_PLAN
+
+async def premium_imagen(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    uid = update.effective_user.id
+    
+    if not is_premium_active(uid):
+        await query.answer("❌ Sesión expirada", show_alert=True)
+        return await plan_premium(update, context)
+    
+    context.user_data["waiting_image"] = True
+    context.user_data["is_premium"] = True
+    
+    await query.message.reply_text(
+        "🖼️ *LECTOR Y ANÁLISIS DE IMÁGENES*\n\n"
+        "📸 Envía una imagen con texto\n\n"
+        "✨ *¿Qué puedo hacer?*\n"
+        "• Extraer todo el texto de la imagen\n"
+        "• Traducir el texto (ES↔EN)\n"
+        "• Convertir el texto a voz\n"
+        "• Analizar y dar consejos expertos\n\n"
+        f"{FIRMA_TEXTO}",
+        parse_mode="Markdown"
+    )
+    await query.answer()
+    return CHOOSING_PLAN
+
+async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Maneja las imágenes recibidas cuando el modo imagen está activo"""
+    uid = update.effective_user.id
+    
+    if not context.user_data.get("waiting_image", False):
+        return
+    
+    try:
+        processing_msg = await update.message.reply_text("⏳ Procesando imagen...")
+        
+        # Obtener la imagen de mayor resolución disponible
+        photo = update.message.photo[-1]
+        file = await context.bot.get_file(photo.file_id)
+        image_bytes = bytes(await file.download_as_bytearray())
+        
+        # Guardar imagen en contexto para reutilizar
+        context.user_data["pending_image_bytes"] = image_bytes
+        context.user_data["pending_image_mime"] = "image/jpeg"
+        
+        # Primero extraemos el texto para detectar el idioma
+        await processing_msg.edit_text("🔍 Leyendo texto de la imagen...")
+        extracted_text = analyze_image_with_claude(image_bytes, "image/jpeg", mode="extract")
+        
+        if not extracted_text or len(extracted_text.strip()) < 5:
+            await update.message.reply_text(
+                "❌ No se pudo detectar texto en la imagen.\n\n"
+                "Asegúrate de que la imagen tenga texto visible y legible.",
+                parse_mode="Markdown"
+            )
+            await processing_msg.delete()
+            return
+        
+        context.user_data["pending_image_text"] = extracted_text
+        
+        # Detectar idioma del texto extraído
+        lang = detect_language(extracted_text)
+        context.user_data["pending_image_lang"] = lang
+        
+        if lang == "es":
+            lang_emoji = "🇪🇸"
+            target_emoji = "🇺🇸"
+            lang_name = "Español"
+            target_name = "Inglés"
+        else:
+            lang_emoji = "🇺🇸"
+            target_emoji = "🇪🇸"
+            lang_name = "Inglés"
+            target_name = "Español"
+        
+        await processing_msg.delete()
+        
+        # Mostrar menú de opciones
+        keyboard = [
+            [InlineKeyboardButton(f"🔊 Audio en {lang_name} (sin traducir)", callback_data="img_audio_original")],
+            [InlineKeyboardButton(f"🔊 Audio traducido {lang_emoji}→{target_emoji}", callback_data="img_audio_traducido")],
+            [InlineKeyboardButton("🔍 Analizar + Consejos Expertos", callback_data="img_analizar")],
+            [InlineKeyboardButton("📋 Solo ver el texto extraído", callback_data="img_solo_texto")],
+        ]
+        
+        # Mostrar preview del texto
+        preview = extracted_text[:200] + "..." if len(extracted_text) > 200 else extracted_text
+        
+        await update.message.reply_text(
+            f"✅ *Imagen procesada*\n\n"
+            f"📝 *Texto detectado ({lang_name}):*\n"
+            f"_{preview}_\n\n"
+            f"¿Qué deseas hacer con este contenido?",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="Markdown"
+        )
+        
+    except Exception as e:
+        logger.error(f"❌ Error procesando imagen: {e}")
+        await update.message.reply_text("❌ Error al procesar la imagen. Intenta de nuevo.")
+        try:
+            await processing_msg.delete()
+        except:
+            pass
+
+async def handle_image_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Maneja las acciones sobre la imagen procesada"""
+    query = update.callback_query
+    await query.answer()
+    uid = update.effective_user.id
+    
+    image_bytes = context.user_data.get("pending_image_bytes")
+    image_text = context.user_data.get("pending_image_text", "")
+    image_lang = context.user_data.get("pending_image_lang", "unknown")
+    image_mime = context.user_data.get("pending_image_mime", "image/jpeg")
+    
+    if not image_bytes:
+        await query.edit_message_text("❌ No hay imagen pendiente. Envía una imagen primero.")
+        return CHOOSING_PLAN
+    
+    action = query.data
+    
+    if action == "img_solo_texto":
+        # Solo mostrar el texto extraído
+        # Dividir en partes si es muy largo
+        max_len = 4000
+        if len(image_text) > max_len:
+            parts = [image_text[i:i+max_len] for i in range(0, len(image_text), max_len)]
+            for i, part in enumerate(parts):
+                await query.message.reply_text(
+                    f"📋 *Texto extraído (parte {i+1}/{len(parts)}):*\n\n{part}",
+                    parse_mode="Markdown"
+                )
+        else:
+            await query.message.reply_text(
+                f"📋 *Texto extraído de la imagen:*\n\n{image_text}\n\n{FIRMA_TEXTO}",
+                parse_mode="Markdown"
+            )
+        
+        if not context.user_data.get("is_premium", False):
+            mark_free_used(uid, "imagen")
+        
+        _send_back_menu(update, context)
+    
+    elif action == "img_audio_original":
+        processing_msg = await query.message.reply_text("⏳ Generando audio...")
+        
+        # Audio en idioma original
+        if image_lang == "es":
+            audio_lang = "es"
+            lang_display = "🇪🇸 Español"
+        else:
+            audio_lang = "en"
+            lang_display = "🇺🇸 Inglés"
+        
+        audio = tts(image_text, audio_lang)
+        
+        if audio:
+            await query.message.reply_voice(
+                audio,
+                caption=f"🔊 Audio en {lang_display} (original)\n\n{FIRMA_TEXTO}"
+            )
+        else:
+            await query.message.reply_text("❌ Error al generar audio.")
+        
+        await processing_msg.delete()
+        
+        if not context.user_data.get("is_premium", False):
+            mark_free_used(uid, "imagen")
+        
+        await _send_back_menu_message(query.message, context)
+    
+    elif action == "img_audio_traducido":
+        processing_msg = await query.message.reply_text("⏳ Traduciendo y generando audio...")
+        
+        if image_lang == "es":
+            target_lang = "en"
+            audio_lang = "en"
+            lang_display = "🇪🇸→🇺🇸"
+        else:
+            target_lang = "es"
+            audio_lang = "es"
+            lang_display = "🇺🇸→🇪🇸"
+        
+        translated_text = translate_text(image_text, source=image_lang, target=target_lang)
+        audio = tts(translated_text, audio_lang)
+        
+        if audio:
+            await query.message.reply_voice(
+                audio,
+                caption=f"🔊 Audio traducido {lang_display}\n\n{FIRMA_TEXTO}"
+            )
+        else:
+            await query.message.reply_text("❌ Error al generar audio traducido.")
+        
+        await processing_msg.delete()
+        
+        if not context.user_data.get("is_premium", False):
+            mark_free_used(uid, "imagen")
+        
+        await _send_back_menu_message(query.message, context)
+    
+    elif action == "img_analizar":
+        processing_msg = await query.message.reply_text("🔍 Analizando imagen con IA experta...\n\n⏳ Esto puede tardar unos segundos...")
+        
+        analysis = analyze_image_with_claude(image_bytes, image_mime, mode="analyze")
+        
+        await processing_msg.delete()
+        
+        if analysis:
+            # Dividir análisis en partes si es muy largo
+            max_len = 4000
+            if len(analysis) > max_len:
+                parts = [analysis[i:i+max_len] for i in range(0, len(analysis), max_len)]
+                for i, part in enumerate(parts):
+                    header = f"📊 *ANÁLISIS EXPERTO (parte {i+1}/{len(parts)}):*\n\n" if i == 0 else ""
+                    await query.message.reply_text(
+                        f"{header}{part}",
+                        parse_mode="Markdown"
+                    )
+            else:
+                await query.message.reply_text(
+                    f"📊 *ANÁLISIS EXPERTO:*\n\n{analysis}\n\n{FIRMA_TEXTO}",
+                    parse_mode="Markdown"
+                )
+            
+            # Ofrecer también el audio del análisis
+            keyboard = [
+                [InlineKeyboardButton("🔊 Escuchar análisis en audio", callback_data="img_audio_analisis")],
+                [InlineKeyboardButton("🔙 Volver al Menú", callback_data="premium_menu" if context.user_data.get("is_premium") else "plan_free")]
+            ]
+            context.user_data["pending_analysis_text"] = analysis
+            context.user_data["pending_analysis_lang"] = image_lang
+            
+            await query.message.reply_text(
+                "¿Deseas escuchar el análisis en audio?",
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+        else:
+            await query.message.reply_text("❌ Error al analizar la imagen.")
+            await _send_back_menu_message(query.message, context)
+        
+        if not context.user_data.get("is_premium", False):
+            mark_free_used(uid, "imagen")
+    
+    elif action == "img_audio_analisis":
+        processing_msg = await query.message.reply_text("⏳ Generando audio del análisis...")
+        
+        analysis_text = context.user_data.get("pending_analysis_text", "")
+        analysis_lang = context.user_data.get("pending_analysis_lang", "es")
+        
+        # El análisis siempre se devuelve en el idioma de la imagen
+        audio_lang = "es" if analysis_lang == "es" else "en"
+        audio = tts(analysis_text[:4500], audio_lang)
+        
+        await processing_msg.delete()
+        
+        if audio:
+            await query.message.reply_voice(
+                audio,
+                caption=f"🔊 Audio del análisis experto\n\n{FIRMA_TEXTO}"
+            )
+        else:
+            await query.message.reply_text("❌ Error al generar audio del análisis.")
+        
+        await _send_back_menu_message(query.message, context)
+    
+    return CHOOSING_PLAN
+
+async def _send_back_menu_message(message, context):
+    """Envía botón de volver al menú"""
+    back = "premium_menu" if context.user_data.get("is_premium") else "plan_free"
+    keyboard = [[InlineKeyboardButton("🔙 Volver al Menú", callback_data=back)]]
+    await message.reply_text(
+        f"✅ Listo. Envía otra imagen o vuelve al menú.\n\n{FIRMA_TEXTO}",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+# ============================================================
+# FIN HANDLERS DE IMAGEN
+# ============================================================
+
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     
-    # Si está esperando respuesta de traducción
     if context.user_data.get("waiting_translate_response"):
         response = update.message.text.strip().upper()
         
@@ -901,7 +1276,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         processing_msg = await update.message.reply_text("⏳ Generando audio...")
         
         if response in ["SI", "SÍ"]:
-            # Usuario quiere traducción
             if lang == "es":
                 target_lang = "en"
                 audio_lang = "en"
@@ -916,7 +1290,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             audio = tts(translated_text, audio_lang)
             caption = f"{lang_display} Audio traducido\n\n{FIRMA_TEXTO}"
         else:
-            # Usuario NO quiere traducción - audio en idioma original
             if lang == "es":
                 audio_lang = "es"
             else:
@@ -950,7 +1323,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await processing_msg.delete()
         return CHOOSING_PLAN
     
-    # Si está esperando texto para convertir a voz
     if not context.user_data.get("waiting_text", False):
         return CHOOSING_PLAN
     
@@ -960,7 +1332,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Texto vacío. Envía un texto válido.")
         return CHOOSING_PLAN
     
-    # Guardar el texto y preguntar si quiere traducción
     context.user_data["text_to_process"] = text
     context.user_data["waiting_translate_response"] = True
     
@@ -999,7 +1370,6 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await processing_msg.delete()
             return
         
-        # Extraer texto según tipo de documento
         if is_docx:
             text = extract_text_from_docx(data)
         else:
@@ -1022,7 +1392,6 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
             audio_lang = "es"
         
         if document_mode == "translate":
-            # Modo traducción - mantener formato original
             if is_docx:
                 translated_file = translate_docx(data, source_lang=lang, target_lang=target_lang)
                 extension = ".docx"
@@ -1045,7 +1414,6 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if not context.user_data.get("is_premium", False):
                 mark_free_used(uid, "documento")
         else:
-            # Modo documento a voz
             translated_text = translate_text(text, source=lang, target=target_lang)
             audio = tts(translated_text, audio_lang)
             
@@ -1146,9 +1514,11 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     data = query.data
     
-    # Manejar respuestas de traducción SI/NO
+    # Acciones de imagen
+    if data in ["img_solo_texto", "img_audio_original", "img_audio_traducido", "img_analizar", "img_audio_analisis"]:
+        return await handle_image_action(update, context)
+    
     if data == "translate_yes":
-        # Simular que el usuario escribió "SI"
         fake_message = type('obj', (object,), {
             'text': 'SI',
             'reply_text': query.message.reply_text,
@@ -1162,7 +1532,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await handle_text(fake_update, context)
     
     elif data == "translate_no":
-        # Simular que el usuario escribió "NO"
         fake_message = type('obj', (object,), {
             'text': 'NO',
             'reply_text': query.message.reply_text,
@@ -1200,6 +1569,8 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await free_doc_voz(update, context)
     elif data == "free_audio":
         return await free_audio(update, context)
+    elif data == "free_imagen":
+        return await free_imagen(update, context)
     elif data == "premium_menu":
         return await show_premium_menu(update, context)
     elif data == "premium_texto":
@@ -1210,6 +1581,8 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await premium_doc_voz(update, context)
     elif data == "premium_audio":
         return await premium_audio(update, context)
+    elif data == "premium_imagen":
+        return await premium_imagen(update, context)
     elif data == "premium_logout":
         uid = update.effective_user.id
         if uid in active_sessions:
@@ -1229,6 +1602,9 @@ def main():
         logger.error("❌ TOKEN NO CONFIGURADO")
         return
     
+    if not ANTHROPIC_API_KEY:
+        logger.warning("⚠️ ANTHROPIC_API_KEY no configurado - función de imágenes no disponible")
+    
     logger.info("🚀 Iniciando bot...")
     app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
     
@@ -1239,6 +1615,7 @@ def main():
                 CallbackQueryHandler(button_callback),
                 MessageHandler(filters.VOICE, handle_voice),
                 MessageHandler(filters.Document.ALL, handle_document),
+                MessageHandler(filters.PHOTO, handle_image),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text)
             ],
             PREMIUM_USERNAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, premium_username)],
