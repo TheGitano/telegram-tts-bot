@@ -1,0 +1,13 @@
+python-telegram-bot==20.7
+python-docx
+PyPDF2
+deep-translator
+gtts
+langdetect
+SpeechRecognition
+pydub
+reportlab
+# google-generativeai (removed - using REST API directly)
+google-auth
+requests
+Pillow
