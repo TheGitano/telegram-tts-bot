@@ -1,0 +1,12 @@
+python-telegram-bot==20.7
+python-docx
+PyPDF2
+deep-translator
+gtts
+langdetect
+SpeechRecognition
+pydub
+reportlab
+google-auth
+requests
+Pillow
