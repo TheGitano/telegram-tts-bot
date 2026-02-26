@@ -264,15 +264,18 @@ def analyze_image_with_claude(image_bytes, image_mime_type="image/jpeg", mode="a
                 "Responde en el idioma del texto. Usa emojis para organizar."
             )
 
-        # Modelos FREE TIER activos (febrero 2026)
-        # gemini-1.5 y gemini-2.0 estan RETIRADOS o sin cuota free
-        # Orden: del mas al menos generoso en RPD
+        # Modelos FREE TIER activos febrero 2026
+        # gemini-2.0 y gemini-1.5 RETIRADOS (404)
+        # Solo funcionan los 2.5:
+        #   gemini-2.5-flash-lite -> 15 RPM, 1000 RPD
+        #   gemini-2.5-flash      -> 10 RPM,  250 RPD
+        #   gemini-2.5-pro        ->  5 RPM,  100 RPD
         models_to_try = [
-            "gemini-2.5-flash-lite",   # 15 RPM, 1000 RPD - el mas generoso
-            "gemini-2.5-flash",        # 10 RPM, 250 RPD
-            "gemini-2.5-pro",          #  5 RPM, 100 RPD
+            "gemini-2.5-flash-lite",
+            "gemini-2.5-flash",
+            "gemini-2.5-pro",
         ]
-        
+
         for model_name in models_to_try:
             try:
                 url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={gemini_key}"
@@ -283,15 +286,12 @@ def analyze_image_with_claude(image_bytes, image_mime_type="image/jpeg", mode="a
                             {"inline_data": {"mime_type": image_mime_type, "data": image_b64}}
                         ]
                     }],
-                    "generationConfig": {
-                        "temperature": 0.2,
-                        "maxOutputTokens": 2048
-                    }
+                    "generationConfig": {"temperature": 0.2, "maxOutputTokens": 2048}
                 }
                 logger.info(f"Llamando Gemini modelo: {model_name}")
                 resp = req.post(url, json=body, timeout=60)
                 logger.info(f"Gemini {model_name} status: {resp.status_code}")
-                
+
                 if resp.status_code == 200:
                     data = resp.json()
                     candidates = data.get("candidates", [])
@@ -299,23 +299,22 @@ def analyze_image_with_claude(image_bytes, image_mime_type="image/jpeg", mode="a
                         parts = candidates[0].get("content", {}).get("parts", [])
                         text = "".join(p.get("text", "") for p in parts)
                         if text and len(text.strip()) > 3:
-                            logger.info(f"✅ Gemini ({model_name}) OK - {len(text)} chars")
+                            logger.info(f"OK: Gemini ({model_name}) -> {len(text)} chars")
                             return text.strip()
-                    logger.warning(f"Modelo {model_name}: 200 sin texto util")
                 elif resp.status_code == 429:
-                    logger.warning(f"Modelo {model_name}: 429 cuota agotada, probando siguiente...")
+                    logger.warning(f"{model_name}: 429 cuota agotada, probando siguiente...")
                     continue
                 else:
                     try:
-                        error_msg = resp.json().get("error", {}).get("message", "unknown")
+                        error_msg = resp.json().get("error", {}).get("message", "?")
                     except Exception:
-                        error_msg = resp.text[:200]
-                    logger.error(f"Modelo {model_name} fallo ({resp.status_code}): {error_msg}")
+                        error_msg = resp.text[:100]
+                    logger.error(f"{model_name} fallo ({resp.status_code}): {error_msg}")
                     continue
-            except Exception as model_err:
-                logger.error(f"Error con modelo {model_name}: {model_err}")
+            except Exception as e:
+                logger.error(f"Error con {model_name}: {e}")
                 continue
-        
+
         logger.error("Todos los modelos Gemini fallaron")
         return None
 
