@@ -264,12 +264,7 @@ def analyze_image_with_claude(image_bytes, image_mime_type="image/jpeg", mode="a
                 "Responde en el idioma del texto. Usa emojis para organizar."
             )
 
-        # Modelos FREE TIER activos febrero 2026
-        # gemini-2.0 y gemini-1.5 RETIRADOS (404)
-        # Solo funcionan los 2.5:
-        #   gemini-2.5-flash-lite -> 15 RPM, 1000 RPD
-        #   gemini-2.5-flash      -> 10 RPM,  250 RPD
-        #   gemini-2.5-pro        ->  5 RPM,  100 RPD
+        # Modelos FREE TIER activos (2026) - gemini-2.0 y 1.5 RETIRADOS
         models_to_try = [
             "gemini-2.5-flash-lite",
             "gemini-2.5-flash",
